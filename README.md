@@ -1,7 +1,8 @@
 # ﬀorj — functional for Java
 
-Java 25 FP essentials, no nonsense: five small types you'd otherwise re-implement
-in every project. Zero runtime dependencies. Stdlib only.
+Java 21+ FP essentials, no nonsense: four small types you'd otherwise re-implement
+in every project. Zero runtime dependencies. Stdlib only. Nothing preview-flagged —
+every class loads on any JDK from 21 up.
 
 ## The name
 
@@ -30,7 +31,13 @@ taste for typography.)
 | `Validated<E, T>` | Like `Result`, but accumulates every error via `NonEmptyList`. | Form / config / DTO validation: surface all the reasons it's broken, not just the first. |
 | `NonEmptyList<T>` | A list the compiler knows is non-empty. | Foundation for `Validated`; also useful for domain "must have at least one" invariants. |
 | `Retry` | Backoff loop that respects `Predicate<E>` for retryability. | The wrapper around any flaky call, virtual-thread safe. |
-| `Scopes` | Helpers over `StructuredTaskScope` (JEP 505). | Parallel fan-out and races that return `Validated` / `Result` directly. |
+
+A fifth type, `Scopes` — parallel fan-out and races over `StructuredTaskScope` that
+return `Validated`/`Result` directly — is **shelved on the
+[`poc/scopes-jep505`](../../tree/poc/scopes-jep505) branch** until structured
+concurrency (JEP 505) finalizes. It was built and tested against the Java 25
+preview API; shipping a preview-flagged class would break the "keeps working
+forever" promise below, so it waits (see ADR-3 in `decisions.md`).
 
 ### Composing `Result`s
 
@@ -116,12 +123,8 @@ parser, and `head()` is total because emptiness is unrepresentable.
 
 ## Requirements
 
-- Java 25
-- Gradle 9.5+ (wrapper checked in)
-- **`Scopes` only**: `--enable-preview`. `StructuredTaskScope` (JEP 505) is still a
-  preview API in Java 25, so `Scopes.class` is preview-flagged — code that loads it must
-  run on Java 25 exactly, with `--enable-preview`. The other four types are plain class
-  files with no such constraint. The flag goes away when the API finalizes.
+- Java 21 or newer (the jar is compiled with `--release 21`; no preview flags)
+- Gradle 9.5+ to build (wrapper checked in)
 
 ## Build
 

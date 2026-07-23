@@ -2,8 +2,10 @@
 
 ## What this is
 
-A small Java 25 library of FP essentials: `Result`, `Validated`, `NonEmptyList`,
-`Retry`, `Scopes`. Zero runtime dependencies. Standard library only.
+A small Java 21+ library of FP essentials: `Result`, `Validated`, `NonEmptyList`,
+`Retry`. Zero runtime dependencies. Standard library only. A fifth type, `Scopes`
+(structured-concurrency helpers), is shelved on branch `poc/scopes-jep505` until
+JEP 505 finalizes (ADR-3).
 
 Designed for projects that would otherwise hand-roll a `Result` type per repo or
 pull Vavr just for that one thing. The library deliberately ships a bounded surface
@@ -19,7 +21,7 @@ Org: [github.com/fforj](https://github.com/fforj). Website: `fforj.dev`.
 
 | Decision | Choice | Reason |
 |---|---|---|
-| Language version | Java 25 (LTS) | Records, sealed interfaces, pattern matching, virtual threads, StructuredTaskScope. No back-compat to earlier versions. |
+| Language version | Java 21 (LTS) baseline, compiled with `--release 21` | Records, sealed interfaces, pattern matching, virtual threads — all final in 21. Widest modern-LTS reach; nothing preview-flagged ships (ADR-3, which superseded the original Java 25 target). |
 | Build tool | Gradle 9+ with Kotlin DSL | Idiomatic, supports Java 25 toolchain, easier to read than Groovy |
 | Runtime dependencies | **Zero.** Standard library only. | Trust dimension: a single-file copy of this library should keep working forever. Adding a transitive opens it up to break. |
 | Test framework | JUnit Jupiter (BOM 5.11+) | Industry default, JUnit Platform integration |
@@ -32,9 +34,9 @@ Org: [github.com/fforj](https://github.com/fforj). Website: `fforj.dev`.
 | Functional collections | **NO.** Use stdlib `List.copyOf`, `Stream`, `Map.copyOf`. | The stdlib is fine. Reimplementing it is the Vavr trap. |
 | Type classes / HKTs | **NO.** | Java's type system doesn't support them; emulating them produces hostile code. |
 | Optional reimplementation | **NO.** Use `java.util.Optional`. | Even though our `Result` could subsume some of its uses, replacing it would fragment the ecosystem. |
-| Checked exceptions in public types | **NO** in domain types; allowed in `Scopes`/`Retry` for `InterruptedException`. | `InterruptedException` is a cooperative-cancellation signal — the only place checked exceptions are still right. |
+| Checked exceptions in public types | **NO** in domain types; allowed in `Retry` (and `Scopes`, when it returns) for `InterruptedException`. | `InterruptedException` is a cooperative-cancellation signal — the only place checked exceptions are still right. |
 | Null handling | Reject in record constructors. Domain types return `Optional` for absence and `Result` for failure. | `Objects.requireNonNull` everywhere a `null` would silently corrupt the type's invariant. |
-| Preview features | Allowed for `StructuredTaskScope` and `Scoped Values` until they finalize. | Build sets `--enable-preview`. Remove when no longer needed. |
+| Preview features | **NO** on `main` (ADR-3). Preview-dependent code lives on `poc/*` branches until the API finalizes. | A preview-flagged class stops loading on the next JDK — the opposite of the "keeps working forever" trust dimension. |
 
 ---
 
@@ -42,9 +44,11 @@ Org: [github.com/fforj](https://github.com/fforj). Website: `fforj.dev`.
 
 ### Bounded scope
 
-The library has FIVE public types (`Result`, `Validated`, `NonEmptyList`, `Retry`,
-`Scopes`). Adding a sixth requires an ADR. The bar is "this is a primitive we
-genuinely missed", not "this would be nice to have."
+The library has FOUR public types (`Result`, `Validated`, `NonEmptyList`, `Retry`),
+with a standing reservation for a fifth: `Scopes` returns from `poc/scopes-jep505`
+when structured concurrency (JEP 505) finalizes (ADR-3). Adding any other type
+requires an ADR. The bar is "this is a primitive we genuinely missed", not "this
+would be nice to have."
 
 **Things that look like they belong here but don't:**
 - `Option<T>` — `Optional<T>` exists.
@@ -114,7 +118,7 @@ reference to the constructor argument.
   through reflection.
 - Property-based tests are welcome (e.g. jqwik) but not required and **must not**
   become a runtime dep on the production code path.
-- Concurrency tests (`Scopes`, `Retry`) MUST be deterministic. Use `Duration.ZERO`
+- Concurrency tests (`Retry`; `Scopes` when it returns) MUST be deterministic. Use `Duration.ZERO`
   or controllable delays, not arbitrary `Thread.sleep(100)`.
 
 ---

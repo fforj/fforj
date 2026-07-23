@@ -11,8 +11,8 @@ import java.util.function.Supplier;
  * <p>Designed to be called from a virtual-thread context — {@link Thread#sleep(Duration)}
  * is safe and cheap on virtual threads; no executor / scheduled task overhead.
  *
- * <p>Cancellation is structural: if the calling thread is interrupted (e.g. because the
- * surrounding {@link Scopes#parallel} shut down), the sleep throws
+ * <p>Cancellation is structural: if the calling thread is interrupted (e.g. because a
+ * surrounding structured-concurrency scope shut down), the sleep throws
  * {@link InterruptedException} and the retry loop bails immediately.
  */
 public final class Retry {

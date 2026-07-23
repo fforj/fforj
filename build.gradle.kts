@@ -13,26 +13,21 @@ java {
     withJavadocJar()
 }
 
-// Enable preview features. StructuredTaskScope (JEP 505) is still a PREVIEW API in
-// Java 25, so --enable-preview is genuinely required to compile Scopes. Consequence
-// for users: Scopes.class is preview-flagged — loading it requires Java 25 exactly,
-// with --enable-preview. The other classes (Result, Validated, NonEmptyList, Retry)
-// are not flagged and load normally. Remove this when the API finalizes.
-val previewArgs = listOf("--enable-preview")
-
+// Target Java 21 LTS (ADR-3): the toolchain compiles and runs tests on a newer JDK,
+// but --release 21 checks all code against the Java 21 API and emits Java 21 class
+// files, so the published jar runs on every JDK from 21 up. No preview features —
+// Scopes (StructuredTaskScope, JEP 505) is shelved on branch poc/scopes-jep505 until
+// the API finalizes.
 tasks.withType<JavaCompile>().configureEach {
-    options.compilerArgs.addAll(previewArgs)
-    options.release = 25
+    options.release = 21
 }
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
-    jvmArgs(previewArgs)
 }
 
 tasks.withType<Javadoc>().configureEach {
-    (options as StandardJavadocDocletOptions).addBooleanOption("-enable-preview", true)
-    (options as StandardJavadocDocletOptions).addStringOption("source", "25")
+    (options as StandardJavadocDocletOptions).addStringOption("source", "21")
     // House style is "a short paragraph on intent" per public member, not exhaustive
     // @param/@return tags — keep doclint's real checks but drop the 'missing' group.
     (options as StandardJavadocDocletOptions).addStringOption("Xdoclint:all,-missing", "-quiet")

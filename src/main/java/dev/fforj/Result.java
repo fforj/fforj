@@ -90,7 +90,8 @@ public sealed interface Result<E, T> {
      * <p><strong>Interruption.</strong> If the body throws {@link InterruptedException},
      * the thread's interrupt status is re-asserted before the exception is mapped to an
      * {@link Err} — {@code attempt} stays total, but the cooperative-cancellation signal
-     * is preserved for the surrounding scope ({@code Scopes}, {@code Retry}, or any other
+     * is preserved for the surrounding scope ({@code Retry}, a structured-concurrency
+     * scope, or any other
      * blocking call further up). Note that {@code Throwable} capture includes
      * {@link Error}s; if you don't want to handle those as values, rethrow from
      * {@code onThrow}.

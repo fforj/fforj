@@ -349,3 +349,86 @@ real-world form test rewritten without arity gymnastics.
 - `src/main/java/dev/fforj/Validated.java` — added `Bound`, `Accumulator`, `accumulate`.
 - `src/test/java/dev/fforj/ValidatedTest.java` — eight accumulate tests.
 - `README.md` — accumulation bullet + example in "Composing `Result`s".
+
+---
+
+## ADR-3 (2026-07-23): Retarget to Java 21 LTS; shelve `Scopes` until JEP 505 finalizes
+
+> Supersedes the "Java 25 (LTS)" and "Preview features allowed" locked decisions
+> in CLAUDE.md (both rows updated to point here).
+
+### Context
+
+An audit of what each type actually requires showed that `Result`, `Validated`,
+`NonEmptyList`, and `Retry` need nothing newer than Java 21: records, sealed
+interfaces, exhaustive switch patterns, record deconstruction,
+`SequencedCollection`, virtual threads, and `Thread.sleep(Duration)` are all
+final in 21. Only `Scopes` forced Java 25 — and not merely 25:
+`StructuredTaskScope`'s redesigned `open()`/`Joiner` API is JEP 505, the API's
+**fifth preview**. The costs of shipping it:
+
+- A preview-flagged class loads only on exactly the JDK it was compiled for,
+  with `--enable-preview`. `Scopes.class` built on 25 will not load on 26.
+  Every JDK release until finalization forces a recompile.
+- The API has been redesigned across its five previews and may change again.
+- The library's core trust pitch — "copy 30 lines into your project and it
+  keeps working forever" — is directly contradicted by a class that stops
+  loading on the next JDK.
+- Requiring Java 25 shrinks the addressable audience badly; Java 21 is where
+  most modern-Java shops are.
+
+`Scopes` is not decorative, though: it is the code-shaped proof of the locked
+"no IO monad" decision — the bridge from structured-scope outcomes to
+`Result`/`Validated`. Deleting it outright would weaken that story.
+
+### Decision
+
+1. **Retarget `main` to Java 21.** The build keeps a newer toolchain for
+   day-to-day development but compiles everything with `--release 21`, so all
+   published classes are plain Java 21 class files checked against the 21 API.
+2. **No preview features on `main`, ever.** Preview-dependent code lives on
+   `poc/*` branches until the underlying API finalizes.
+3. **Shelve `Scopes` on branch `poc/scopes-jep505`.** The branch preserves the
+   full working implementation and its deterministic test suite, frozen against
+   the Java 25 preview API. The branch name states the unblocking event.
+4. **Standing reservation for the fifth type.** When JEP 505 finalizes, `Scopes`
+   returns to `main` via a short ADR that ratifies the port to the final API —
+   rebased, recompiled without flags, tests green. The five-type budget in
+   CLAUDE.md becomes four-plus-one-reserved until then.
+
+### Consequences
+
+- The published jar runs on every JDK from 21 up, with no flags and no
+  load-time surprises — the trust dimension holds for the entire artifact.
+- The audience for the library grows to every Java 21+ shop.
+- The "no IO monad" rationale temporarily rests on documentation rather than
+  shipped code. Accepted: the argument (virtual threads are 21-final) is
+  unchanged, and the proof is one branch away.
+- The `poc/scopes-jep505` branch does not build on `main`'s toolchain settings
+  as they evolve; it is a frozen snapshot, not a maintained parallel line. It
+  gets rebased once, when JEP 505 finalizes.
+- README, CLAUDE.md (three locked-decision rows, scope section, testing
+  section), and the GitHub description all state Java 21+ and four types.
+
+### Alternatives considered
+
+- **Status quo (five types, Java 25 + preview)**: rejected. The recompile
+  treadmill and the "won't load on 26" footgun contradict the library's own
+  trust principle, for a type that is not the center of the project.
+- **Split artifacts (`fforj` on 21, `fforj-scopes` on 25/preview)**: rejected
+  for now. Two artifacts is real, permanent complexity for a deliberately tiny
+  library; the branch achieves the same preservation at zero shipped cost.
+  Revisit only if finalization drags on for multiple releases AND users ask.
+- **Keep `Scopes` in-tree but excluded from compilation**: rejected. Uncompiled
+  code rots invisibly; a branch is explicit about being frozen and against what.
+
+### Files to change
+
+- `src/main/java/dev/fforj/Scopes.java`, `src/test/java/dev/fforj/ScopesTest.java`
+  — removed from `main`; preserved on `poc/scopes-jep505`.
+- `build.gradle.kts` — `--release 21`, preview args removed.
+- `src/main/java/dev/fforj/Retry.java`, `Result.java` — Javadoc references to
+  `Scopes` generalized to "structured-concurrency scope".
+- `CLAUDE.md` — language-version, preview-features, checked-exceptions rows;
+  bounded-scope and testing sections.
+- `README.md` — intro, type table (shelved note), requirements.
