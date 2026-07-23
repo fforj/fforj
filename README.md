@@ -1,7 +1,19 @@
-# fforj — Java 25 FP essentials, no nonsense
+# ﬀorj — functional for Java
 
-Five small types you'd otherwise re-implement in every Java project. Zero runtime
-dependencies. Stdlib only.
+Java 25 FP essentials, no nonsense: five small types you'd otherwise re-implement
+in every project. Zero runtime dependencies. Stdlib only.
+
+## The name
+
+**ﬀorj** is **f**unctional **for** **J**ava — and the `ff` is one character, not
+two: ﬀ, U+FB00, the double-f ligature. A ligature is what a typesetter reaches for
+when two letters compose better as a single glyph than side by side. That's the
+whole design goal, in one character: functional types and plain Java, fused,
+nothing added.
+
+(Everywhere machines read the name — the Maven artifact, the `dev.fforj` package,
+the GitHub org — it's spelled with two plain `f`s, because build tools have no
+taste for typography.)
 
 ## Why
 
