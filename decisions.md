@@ -41,7 +41,7 @@ Adopt the existing scaffold as the canonical starting point:
 - `Scopes.parallel` and `Scopes.race` — wrappers around
   `StructuredTaskScope` (JEP 505) returning `Validated` / `Result`.
 
-Build uses Gradle 9.0 with Kotlin DSL, Java 25 toolchain, JUnit Jupiter 5.11
+Build uses Gradle 9.5.1 with Kotlin DSL, Java 25 toolchain, JUnit Jupiter 5.12
 for testing. `--enable-preview` set in compile and test JVM args until the
 remaining preview features finalize.
 
@@ -172,8 +172,10 @@ case in == out); nested `binding` blocks each catching their own abort.
      Don't wrap bound calls in catch-all handlers.
   2. Steps that genuinely *throw* (rather than returning `Err`) are not captured
      by `binding` — the throwable propagates out. Use `attempt` for those.
-- Nested `binding` calls are safe: each invocation's `Halt` is a distinct
-  class/instance caught by its own boundary.
+- Nested `binding` calls are safe: each abort carries the identity of the
+  invocation that threw it, and a boundary rethrows aborts it does not own
+  (see the 2026-07-23 addendum — the original per-invocation-class claim was
+  wrong).
 - Cost: one cheap allocation per short-circuit (no stack trace). Fine for the
   hot-path and deterministic-concurrency constraints in CLAUDE.md.
 - **Forward compat:** if a future Java gains for-comprehensions or value-carrying
@@ -190,8 +192,9 @@ case in == out); nested `binding` blocks each catching their own abort.
   the immediately-threaded value without re-nesting — no better than `flatMap`.
 - **A generic `ShortCircuit extends RuntimeException` holding `Object error`,
   cast to `E` on catch.** Rejected in favour of the method-local class, which
-  carries `E` with no unchecked cast and cannot leak across unrelated `binding`
-  calls.
+  carries `E` with no unchecked cast. (The original rationale also claimed it
+  "cannot leak across unrelated `binding` calls" — that part was wrong; see the
+  2026-07-23 addendum.)
 - **Mirror monadyssey literally with an `IO`/effect type.** Rejected: forbidden
   locked decision. `binding` sequences plain `Result` values; it is do-notation,
   not an IO monad.
@@ -227,6 +230,37 @@ type, no locked-decision tension); they live here only because they round out th
 
 Files: `src/main/java/dev/fforj/Result.java` (added `fromOptional` + the `Binder`
 overload); `src/test/java/dev/fforj/ResultTest.java` (four bridge tests).
+
+### Addendum (2026-07-23): owner-tokened `Halt` — nested-block correctness fix
+
+The original claim "each invocation's `Halt` is a distinct class/instance caught
+by its own boundary" was wrong: a method-local class is **one class shared by
+every invocation** of its method, so a nested `binding` (or ADR-2 `accumulate`)
+block's catch also caught an *outer* block's abort. A full-codebase review
+(2026-07-23) reproduced both failure modes:
+
+- `Result.binding`: using the outer binder inside an inner block returned the
+  outer error as the inner block's `Err` with the wrong error type — heap
+  pollution surfacing later as a `ClassCastException`.
+- `Validated.accumulate`: unwrapping an outer `Bound` inside an inner block was
+  caught by the inner boundary, whose own accumulator was empty, crashing with
+  `NoSuchElementException`.
+
+Fix: a package-private abstract `Halt` base class (`Halt.java`, stack-trace-free)
+now carries an `owner` identity token — the `Binder`/`Accumulator` instance of
+the invocation that threw. Each boundary catches its method-local subclass and
+**rethrows aborts whose owner is not its own handle**, so an abort always unwinds
+to the block that created it. The typed error still rides a method-local subclass
+field, so there is still no unchecked cast. `Halt` is package-private, not a
+public type — the five-type budget is unchanged.
+
+Bonus: `Result.attempt` now rethrows `Halt` instead of capturing it, so an abort
+crossing an `attempt` body is no longer silently converted into a meaningless
+mapped `Err` (documented in `attempt`'s Javadoc).
+
+Regression tests: nested `binding` using the outer binder from the inner block;
+nested `accumulate` unwrapping an outer `Bound` inside an inner block; a binding
+abort passing through `attempt` untouched.
 
 ---
 

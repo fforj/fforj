@@ -217,6 +217,90 @@ class ResultTest {
     }
 
     @Test
+    void nested_binding_using_the_outer_binder_inside_an_inner_block_aborts_the_outer_block() {
+        var innerCompleted = new boolean[]{false};
+        var outerResumed = new boolean[]{false};
+
+        // Regression: the abort thrown by the OUTER binder must not be caught by the
+        // inner block's boundary (which would return the outer error as the inner
+        // block's Err with the wrong error type — note the inner block's E is String).
+        Result<Failure, Integer> outer = Result.binding(bind -> {
+            Result<String, Integer> inner = Result.binding(innerBind -> {
+                int x = bind.on(positive("-7"));   // outer Err -> aborts the OUTER block
+                innerCompleted[0] = true;          // must never run
+                return x;
+            });
+            outerResumed[0] = true;                // must never run either
+            return inner.getOrElse(0);
+        });
+
+        assertEquals(Result.<Failure, Integer>err(new Failure.NotPositive(-7)), outer);
+        assertFalse(innerCompleted[0], "the outer abort must skip the rest of the inner block");
+        assertFalse(outerResumed[0], "the outer abort must not be swallowed by the inner boundary");
+    }
+
+    @Test
+    void binding_abort_passes_through_an_attempt_wrapping_the_bound_call() {
+        // attempt must not capture the control-flow abort of an enclosing binding block:
+        // the short-circuit inside the attempt body aborts the whole block, it does not
+        // become a mapped Err of the attempt.
+        Result<Failure, Integer> r = Result.binding(bind -> bind.on(Result.attempt(
+                () -> bind.on(positive("-1")) + 1,
+                t -> new Failure.Message("swallowed: " + t))));
+
+        assertEquals(Result.<Failure, Integer>err(new Failure.NotPositive(-1)), r);
+    }
+
+    @Test
+    void mapErr_transforms_the_error_branch_only() {
+        var err = Result.<Failure, Integer>err(new Failure.NotPositive(-1))
+                .mapErr(Failure::message);
+        var ok = Result.<Failure, Integer>ok(5).mapErr(Failure::message);
+
+        assertEquals(Result.<String, Integer>err("not positive: -1"), err);
+        assertEquals(Result.<String, Integer>ok(5), ok);
+    }
+
+    @Test
+    void getOrElse_returns_value_on_ok_and_fallback_on_err() {
+        assertEquals(7, Result.<Failure, Integer>ok(7).getOrElse(0));
+        assertEquals(0, Result.<Failure, Integer>err(new Failure.Message("nope")).getOrElse(0));
+    }
+
+    @Test
+    void getOrElse_rejects_a_null_fallback() {
+        assertThrows(NullPointerException.class,
+                () -> Result.<Failure, Integer>ok(7).getOrElse(null));
+    }
+
+    @Test
+    void getOrElseGet_computes_fallback_from_the_error_only_on_err() {
+        var fallbackCalls = new int[]{0};
+
+        int onOk = Result.<Failure, Integer>ok(7).getOrElseGet(e -> {
+            fallbackCalls[0]++;
+            return 0;
+        });
+        int onErr = Result.<Failure, Integer>err(new Failure.NotPositive(-3))
+                .getOrElseGet(e -> ((Failure.NotPositive) e).value());
+
+        assertEquals(7, onOk);
+        assertEquals(0, fallbackCalls[0], "fallback must not run on Ok");
+        assertEquals(-3, onErr);
+    }
+
+    @Test
+    void okValue_and_errValue_lift_each_case_into_an_Optional() {
+        Result<Failure, Integer> ok = Result.ok(42);
+        Result<Failure, Integer> err = Result.err(new Failure.Message("nope"));
+
+        assertEquals(Optional.of(42), ok.okValue());
+        assertEquals(Optional.empty(), ok.errValue());
+        assertEquals(Optional.empty(), err.okValue());
+        assertEquals(Optional.of(new Failure.Message("nope")), err.errValue());
+    }
+
+    @Test
     void fromOptional_lifts_present_to_ok_and_empty_to_err() {
         Result<Failure, Integer> present =
                 Result.fromOptional(Optional.of(7), () -> new Failure.Message("absent"));

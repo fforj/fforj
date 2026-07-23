@@ -1,6 +1,7 @@
 package dev.fforj;
 
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.BiFunction;
@@ -25,13 +26,14 @@ public sealed interface Validated<E, T> {
 
     record Valid<E, T>(T value) implements Validated<E, T> {
         public Valid {
-            Objects.requireNonNull(value);
+            Objects.requireNonNull(value,
+                    "Valid value must not be null — use Optional<T> for absence");
         }
     }
 
     record Invalid<E, T>(NonEmptyList<E> errors) implements Validated<E, T> {
         public Invalid {
-            Objects.requireNonNull(errors);
+            Objects.requireNonNull(errors, "Invalid must carry a non-null error list");
         }
     }
 
@@ -131,9 +133,10 @@ public sealed interface Validated<E, T> {
      * {@code Result.binding}; this DSL is for independent ones.
      *
      * <p>The abort uses the same private control-flow exception mechanism as
-     * {@code Result.binding} (see ADR-1), with the same caveat: don't wrap unwraps in a
+     * {@code Result.binding} (see ADR-1), with the same caveats: don't wrap unwraps in a
      * catch-all {@code catch (RuntimeException e)}, and don't let {@code Bound} handles
-     * escape the block.
+     * escape the block. Nested {@code accumulate} blocks are safe — each abort carries the
+     * identity of the block that created it and unwinds to that block's boundary.
      *
      * @param block receives the {@link Accumulator} and returns the composed value.
      * @return {@link Valid} of the block's return value, or {@link Invalid} carrying all
@@ -142,11 +145,11 @@ public sealed interface Validated<E, T> {
     static <E, T> Validated<E, T> accumulate(Function<? super Accumulator<E>, ? extends T> block) {
         Objects.requireNonNull(block, "accumulate block must not be null");
 
-        // Same shape as Result.binding's Halt (ADR-1): local class, no stack trace.
+        // Same mechanism as Result.binding (ADR-1): a stack-trace-free Halt subclass.
         // Carries no payload — the errors live in the accumulator list.
-        final class Halt extends RuntimeException {
-            Halt() {
-                super(null, null, false, false);
+        final class Abort extends Halt {
+            Abort(Object owner) {
+                super(owner);
             }
         }
 
@@ -159,7 +162,7 @@ public sealed interface Validated<E, T> {
                     case Valid<E, U> valid -> valid::value;
                     case Invalid<E, U> invalid -> {
                         errors.addAll(invalid.errors().toList());
-                        yield () -> { throw new Halt(); };
+                        yield () -> { throw new Abort(this); };
                     }
                 };
             }
@@ -168,19 +171,27 @@ public sealed interface Validated<E, T> {
         T outcome;
         try {
             outcome = block.apply(acc);
-        } catch (Halt halt) {
-            // Unreachable with empty errors: Halt is only thrown by a failed binding,
-            // which always records its errors first.
-            return new Invalid<>(new NonEmptyList<>(
-                    errors.getFirst(), errors.subList(1, errors.size())));
+        } catch (Abort abort) {
+            // A local class is shared by every invocation of this method, so a nested
+            // accumulate block also catches an outer block's abort here. Only handle our
+            // own; rethrow foreign aborts so they unwind to the block that created them.
+            if (abort.owner != acc) {
+                throw abort;
+            }
+            // Never empty here: our own Abort is only thrown by a failed binding, which
+            // always records its errors first.
+            return new Invalid<>(toNonEmpty(errors));
         }
         if (errors.isEmpty()) {
             return new Valid<>(outcome);
         }
         // The block completed without unwrapping any failed binding, but failures were
         // recorded — the result is still Invalid; accumulation doesn't depend on unwraps.
-        return new Invalid<>(new NonEmptyList<>(
-                errors.getFirst(), errors.subList(1, errors.size())));
+        return new Invalid<>(toNonEmpty(errors));
+    }
+
+    private static <E> NonEmptyList<E> toNonEmpty(List<E> errors) {
+        return new NonEmptyList<>(errors.getFirst(), errors.subList(1, errors.size()));
     }
 
     // ---------------------------------------------------------------------
@@ -251,7 +262,7 @@ public sealed interface Validated<E, T> {
 
     /** Fold both cases into a single value. */
     default <R> R fold(
-            Function<NonEmptyList<E>, ? extends R> onInvalid,
+            Function<? super NonEmptyList<E>, ? extends R> onInvalid,
             Function<? super T, ? extends R> onValid
     ) {
         return switch (this) {

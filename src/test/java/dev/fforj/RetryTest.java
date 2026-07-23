@@ -85,10 +85,27 @@ class RetryTest {
         });
 
         // First call: immediate. Second: after ~10ms. Third: after ~30ms (10+20).
-        assertTrue(timings[1] - timings[0] >= 8_000_000L,  // 8ms tolerance
+        // The bounds below are deliberately looser than the nominal delays (8 < 10,
+        // 16 < 20): they only assert the doubling shape, with slack for clock coarseness.
+        assertTrue(timings[1] - timings[0] >= 8_000_000L,
                 "delay before second attempt should be >=10ms, was " + (timings[1] - timings[0]) + "ns");
-        assertTrue(timings[2] - timings[1] >= 16_000_000L, // 16ms tolerance
+        assertTrue(timings[2] - timings[1] >= 16_000_000L,
                 "delay before third attempt should be >=20ms, was " + (timings[2] - timings[1]) + "ns");
+    }
+
+    @Test
+    void single_attempt_policy_never_retries_and_never_sleeps() throws InterruptedException {
+        var calls = new int[]{0};
+        // A delay long enough that any accidental sleep would hang the test noticeably.
+        var policy = Retry.Policy.fixed(1, Duration.ofSeconds(30));
+
+        Result<Err, String> r = Retry.run(policy, e -> true, () -> {
+            calls[0]++;
+            return Result.err(Err.Transient);
+        });
+
+        assertEquals(Result.<Err, String>err(Err.Transient), r);
+        assertEquals(1, calls[0], "maxAttempts=1 means exactly one call, even on a retryable error");
     }
 
     @Test

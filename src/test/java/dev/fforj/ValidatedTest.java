@@ -10,6 +10,7 @@ import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ValidatedTest {
 
@@ -231,6 +232,83 @@ class ValidatedTest {
 
         // ...but the result must still be Invalid: accumulation doesn't depend on unwraps.
         assertEquals(Validated.<Failure, String>invalid(new Failure.NotPositive(-1)), v);
+    }
+
+    @Test
+    void nested_accumulate_unwrapping_an_outer_bound_inside_an_inner_block_aborts_the_outer_block() {
+        var innerCompleted = new boolean[]{false};
+        var outerResumed = new boolean[]{false};
+
+        // Regression: the abort thrown by unwrapping the OUTER block's failed binding
+        // must not be caught by the inner block's boundary (whose own accumulator is
+        // empty — catching it there used to crash with NoSuchElementException).
+        Validated<Failure, Integer> outer = Validated.accumulate(acc -> {
+            var bad = acc.on(positiveAge(-1));
+            Validated<Failure, Integer> inner = Validated.accumulate(innerAcc -> {
+                int x = bad.value();               // aborts the OUTER block
+                innerCompleted[0] = true;          // must never run
+                return x;
+            });
+            outerResumed[0] = true;                // must never run either
+            return 0;
+        });
+
+        assertEquals(Validated.<Failure, Integer>invalid(new Failure.NotPositive(-1)), outer);
+        assertFalse(innerCompleted[0], "the outer abort must skip the rest of the inner block");
+        assertFalse(outerResumed[0], "the outer abort must not be swallowed by the inner boundary");
+    }
+
+    @Test
+    void accumulate_interleaved_bind_and_unwrap_degrades_to_short_circuit_as_documented() {
+        var laterValidationRan = new boolean[]{false};
+
+        Validated<Failure, Integer> v = Validated.accumulate(acc -> {
+            int a = acc.on(positiveAge(-1)).value();   // unwrap immediately -> aborts here
+            laterValidationRan[0] = true;              // must never run
+            int b = acc.on(positiveAge(-2)).value();
+            return a + b;
+        });
+
+        // Only the first error surfaces: interleaving forfeits accumulation.
+        assertEquals(Validated.<Failure, Integer>invalid(new Failure.NotPositive(-1)), v);
+        assertFalse(laterValidationRan[0], "an eager unwrap must abort before later validations bind");
+    }
+
+    @Test
+    void isValid_and_isInvalid_are_self_consistent() {
+        var valid = Validated.<Failure, Integer>valid(1);
+        var invalid = Validated.<Failure, Integer>invalid(new Failure.Message("e"));
+
+        assertTrue(valid.isValid());
+        assertFalse(valid.isInvalid());
+        assertTrue(invalid.isInvalid());
+        assertFalse(invalid.isValid());
+    }
+
+    @Test
+    void fromResult_lifts_an_ok_into_a_valid() {
+        assertEquals(Validated.<Failure, Integer>valid(7),
+                Validated.fromResult(Result.<Failure, Integer>ok(7)));
+    }
+
+    @Test
+    void toResult_maps_a_valid_to_a_plain_ok() {
+        assertEquals(Result.<NonEmptyList<Failure>, Integer>ok(7),
+                Validated.<Failure, Integer>valid(7).toResult());
+    }
+
+    @Test
+    void map_preserves_the_invalid_case_untouched() {
+        var mapperCalls = new int[]{0};
+        var invalid = Validated.<Failure, Integer>invalid(new Failure.Message("nope"));
+
+        var mapped = invalid.map(i -> {
+            mapperCalls[0]++;
+            return i * 2;
+        });
+
+        assertEquals(invalid, mapped);
+        assertEquals(0, mapperCalls[0], "map function must not run on Invalid");
     }
 
     @Test

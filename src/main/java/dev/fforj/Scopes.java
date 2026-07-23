@@ -8,7 +8,8 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
- * Ergonomic helpers around {@link StructuredTaskScope} (JEP 505, finalized in Java 25).
+ * Ergonomic helpers around {@link StructuredTaskScope} (JEP 505 — still a <em>preview</em>
+ * API in Java 25, so loading this class requires {@code --enable-preview}; see the README).
  *
  * <p>The structured-concurrency model is the entire reason this library does NOT ship
  * an {@code IO} monad: with virtual threads + structured scopes you write straight-line
@@ -31,6 +32,8 @@ public final class Scopes {
      *   <li>Every task runs to completion (even if some return {@code Err}). One slow
      *       task does not block another. This matches the "show me ALL the validation
      *       failures" use case.</li>
+     *   <li>Values and errors are accumulated in task (argument) order, not completion
+     *       order — results are stable regardless of scheduling.</li>
      *   <li>If any task throws an uncaught exception, it counts as {@code FAILED} on
      *       the scope handle; the exception is mapped to an error via {@code onThrow}
      *       and added to the accumulator.</li>

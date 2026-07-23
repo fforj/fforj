@@ -94,6 +94,12 @@ public sealed interface Result<E, T> {
      * blocking call further up). Note that {@code Throwable} capture includes
      * {@link Error}s; if you don't want to handle those as values, rethrow from
      * {@code onThrow}.
+     *
+     * <p><strong>Binding aborts pass through.</strong> The control-flow abort used by
+     * {@link #binding(Function)} and {@code Validated.accumulate} is <em>not</em> captured:
+     * if the body short-circuits an enclosing block ({@code bind.on(...)} of an {@code Err},
+     * {@code Bound.value()} of a failed binding), the abort propagates through
+     * {@code attempt} untouched instead of being mapped to a meaningless {@code Err}.
      */
     static <E, T> Result<E, T> attempt(
             Callable<? extends T> body,
@@ -101,6 +107,10 @@ public sealed interface Result<E, T> {
     ) {
         try {
             return ok(body.call());
+        } catch (Halt halt) {
+            // Control flow of an enclosing binding/accumulate block, not a failure of the
+            // body — let it unwind to its own boundary.
+            throw halt;
         } catch (InterruptedException ie) {
             // Don't swallow cooperative cancellation: keep attempt total (the caller gets
             // an Err) but re-assert the flag so enclosing scopes still observe it.
@@ -122,8 +132,8 @@ public sealed interface Result<E, T> {
      * {@code Result} pipeline; the reverse direction is {@link #okValue()} / {@link #errValue()}.
      *
      * <pre>{@code
-     * Result<Failure, NonEmptyList<X>> r =
-     *     Result.fromOptional(NonEmptyList.fromList(xs), Failure.NoCandidates::new);
+     * Result<AppError, NonEmptyList<X>> r =                     // AppError is your own type
+     *     Result.fromOptional(NonEmptyList.fromList(xs), AppError.NoCandidates::new);
      * }</pre>
      */
     static <E, T> Result<E, T> fromOptional(
@@ -158,7 +168,7 @@ public sealed interface Result<E, T> {
          * calls be sequenced together without bridging each one by hand.
          *
          * <pre>{@code
-         * var candidates = bind.on(NonEmptyList.fromList(xs), Failure.NoCandidates::new);
+         * var candidates = bind.on(NonEmptyList.fromList(xs), AppError.NoCandidates::new);
          * }</pre>
          */
         default <T> T on(Optional<? extends T> maybe, Supplier<? extends E> ifEmpty) {
@@ -200,7 +210,9 @@ public sealed interface Result<E, T> {
      *       <em>not</em> captured here — the throwable propagates out of {@code binding}.
      *       Use {@link #attempt(Callable, Function)} for those.</li>
      * </ul>
-     * Nested {@code binding} calls are safe; each abort is caught by its own block.
+     * Nested {@code binding} calls are safe; each abort carries the identity of the block
+     * that created it and is caught only by that block's boundary — using an outer binder
+     * inside an inner block aborts the outer block, as it should.
      *
      * @param block receives a {@link Binder} and returns the composed success value.
      * @return {@link Ok} of the block's return value, or the first {@link Err} that
@@ -209,13 +221,11 @@ public sealed interface Result<E, T> {
     static <E, T> Result<E, T> binding(Function<? super Binder<E>, ? extends T> block) {
         Objects.requireNonNull(block, "binding block must not be null");
 
-        // Local class so it closes over E — the error rides the exception with no cast.
-        final class Halt extends RuntimeException {
+        // Local subclass so it closes over E — the error rides the exception with no cast.
+        final class Abort extends Halt {
             final E error;
-            Halt(E error) {
-                // writableStackTrace=false (last arg) skips fillInStackTrace() — this is
-                // pure control flow, so the throw stays cheap with no stack capture.
-                super(null, null, false, false);
+            Abort(Object owner, E error) {
+                super(owner);
                 this.error = error;
             }
         }
@@ -225,15 +235,21 @@ public sealed interface Result<E, T> {
             public <U> U on(Result<E, U> result) {
                 return switch (result) {
                     case Ok<E, U> ok -> ok.value();
-                    case Err<E, U> err -> throw new Halt(err.error());
+                    case Err<E, U> err -> throw new Abort(this, err.error());
                 };
             }
         };
 
         try {
             return ok(block.apply(binder));
-        } catch (Halt halt) {
-            return err(halt.error);
+        } catch (Abort abort) {
+            // A local class is shared by every invocation of this method, so a nested
+            // binding block also catches an outer block's abort here. Only handle our
+            // own; rethrow foreign aborts so they unwind to the block that created them.
+            if (abort.owner != binder) {
+                throw abort;
+            }
+            return err(abort.error);
         }
     }
 
@@ -316,8 +332,10 @@ public sealed interface Result<E, T> {
         return flatMap(t -> other.map(u -> f.apply(t, u)));
     }
 
-    /** Provide a fallback when this is {@link Err}. */
+    /** Provide a fallback when this is {@link Err}. The fallback must not be null. */
     default T getOrElse(T fallback) {
+        Objects.requireNonNull(fallback,
+                "getOrElse fallback must not be null — use okValue() for absence");
         return switch (this) {
             case Ok<E, T> ok -> ok.value();
             case Err<E, T> ignored -> fallback;
@@ -326,6 +344,7 @@ public sealed interface Result<E, T> {
 
     /** Provide a lazy fallback when this is {@link Err}. */
     default T getOrElseGet(Function<? super E, ? extends T> fallback) {
+        Objects.requireNonNull(fallback, "getOrElseGet fallback must not be null");
         return switch (this) {
             case Ok<E, T> ok -> ok.value();
             case Err<E, T> err -> fallback.apply(err.error());

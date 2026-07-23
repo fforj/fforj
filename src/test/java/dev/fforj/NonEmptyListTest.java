@@ -2,6 +2,8 @@ package dev.fforj;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -59,5 +61,50 @@ class NonEmptyListTest {
     @Test
     void cannot_pass_null_head() {
         assertThrows(NullPointerException.class, () -> NonEmptyList.of((Object) null));
+    }
+
+    @Test
+    void cannot_pass_null_tail_or_null_tail_element() {
+        assertThrows(NullPointerException.class, () -> new NonEmptyList<>("a", null));
+        assertThrows(NullPointerException.class,
+                () -> new NonEmptyList<>("a", Arrays.asList("b", null)));
+    }
+
+    @Test
+    void mutating_the_tail_passed_to_the_constructor_does_not_affect_the_list() {
+        var tail = new ArrayList<>(List.of(2, 3));
+        var nel = new NonEmptyList<>(1, tail);
+
+        tail.add(99);
+
+        assertEquals(List.of(1, 2, 3), nel.toList());
+    }
+
+    @Test
+    void mutating_the_list_passed_to_fromList_does_not_affect_the_result() {
+        var source = new ArrayList<>(List.of("x", "y"));
+        var nel = NonEmptyList.fromList(source).orElseThrow();
+
+        source.add("z");
+        source.set(0, "mutated");
+
+        assertEquals(List.of("x", "y"), nel.toList());
+    }
+
+    @Test
+    void toList_and_tail_are_unmodifiable() {
+        var nel = NonEmptyList.of(1, 2, 3);
+
+        assertThrows(UnsupportedOperationException.class, () -> nel.toList().add(4));
+        assertThrows(UnsupportedOperationException.class, () -> nel.tail().add(4));
+    }
+
+    @Test
+    void iterates_all_elements_head_first() {
+        var seen = new ArrayList<Integer>();
+        for (int i : NonEmptyList.of(1, 2, 3)) {
+            seen.add(i);
+        }
+        assertEquals(List.of(1, 2, 3), seen);
     }
 }

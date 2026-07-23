@@ -36,7 +36,8 @@ Three tools, by the shape of your steps:
   short-circuiting).
 
 ```java
-Validated<Failure, Form> form = Validated.accumulate(acc -> {
+// AppError is your own domain error type — the library never prescribes one.
+Validated<AppError, Form> form = Validated.accumulate(acc -> {
     var name  = acc.on(validateName(raw));    // Invalid -> recorded, keeps going
     var email = acc.on(validateEmail(raw));   // still runs
     var age   = acc.on(validateAge(raw));     // still runs
@@ -46,10 +47,10 @@ Validated<Failure, Form> form = Validated.accumulate(acc -> {
 ```
 
 ```java
-Result<Failure, Summary> r = Result.binding(bind -> {
-    var candidates = bind.on(NonEmptyList.fromList(xs), Failure.NoCandidates::new);
+Result<AppError, Summary> r = Result.binding(bind -> {
+    var candidates = bind.on(NonEmptyList.fromList(xs), AppError.NoCandidates::new);
     var best       = bind.on(score(candidates));         // Result-returning step
-    var enriched   = bind.on(Result.attempt(() -> fetch(best), Failure::from));
+    var enriched   = bind.on(Result.attempt(() -> fetch(best), AppError::from));
     return Summary.of(enriched);
 });
 ```
@@ -69,12 +70,12 @@ public record Email(String value) {
         if (!value.contains("@"))                           // Email cannot exist
             throw new IllegalArgumentException("not an email: " + value);
     }
-    public static Result<Failure, Email> parse(String raw) { // the door: typed errors
-        return Result.attempt(() -> new Email(raw), t -> new Failure.Malformed(raw));
+    public static Result<AppError, Email> parse(String raw) { // the door: typed errors
+        return Result.attempt(() -> new Email(raw), t -> new AppError.Malformed(raw));
     }
 }
 
-Validated<Failure, Registration> reg = Validated.accumulate(acc -> {
+Validated<AppError, Registration> reg = Validated.accumulate(acc -> {
     var email = acc.on(Email.parse(rawEmail));     // every field error surfaces at once
     var age   = acc.on(Age.parse(rawAge));
     return new Registration(email.value(), age.value());

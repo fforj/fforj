@@ -2,6 +2,7 @@ package dev.fforj;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -9,7 +10,8 @@ import java.util.function.Function;
 import java.util.stream.Stream;
 
 /**
- * A {@link List} with a compile-time guarantee that it contains at least one element.
+ * An immutable sequence with a compile-time guarantee that it contains at least one
+ * element. Iterable head-first; convert to a plain {@link List} with {@link #toList()}.
  *
  * <p>Use cases:
  * <ul>
@@ -22,7 +24,7 @@ import java.util.stream.Stream;
  * <p>Backed by a defensively-copied {@link List} for {@link #tail()} so callers cannot
  * mutate the internal state.
  */
-public record NonEmptyList<T>(T head, List<T> tail) {
+public record NonEmptyList<T>(T head, List<T> tail) implements Iterable<T> {
 
     public NonEmptyList {
         Objects.requireNonNull(head, "head must not be null");
@@ -77,6 +79,12 @@ public record NonEmptyList<T>(T head, List<T> tail) {
     /** Stream all elements, head first. */
     public Stream<T> stream() {
         return Stream.concat(Stream.of(head), tail.stream());
+    }
+
+    /** Iterate all elements, head first. The iterator does not support removal. */
+    @Override
+    public Iterator<T> iterator() {
+        return toList().iterator();
     }
 
     // ---------------------------------------------------------------------

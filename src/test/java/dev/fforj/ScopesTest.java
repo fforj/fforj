@@ -8,6 +8,7 @@ import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ScopesTest {
@@ -37,12 +38,11 @@ class ScopesTest {
                 t -> new Failure.Message("uncaught: " + t.getClass().getSimpleName())
         );
 
-        // We don't assert ordering — parallel completion order is not guaranteed.
-        assertTrue(v instanceof Validated.Invalid<Failure, List<Integer>>);
-        var errs = ((Validated.Invalid<Failure, List<Integer>>) v).errors().toList();
-        assertEquals(2, errs.size());
-        assertTrue(errs.contains(new Failure.Message("first")));
-        assertTrue(errs.contains(new Failure.Message("third")));
+        // Errors come back in task (argument) order, not completion order — parallel
+        // accumulates by iterating the fork handles, so the result is deterministic.
+        assertEquals(Validated.<Failure, List<Integer>>invalid(NonEmptyList.of(
+                new Failure.Message("first"),
+                new Failure.Message("third"))), v);
     }
 
     @Test
@@ -138,6 +138,54 @@ class ScopesTest {
         var error = ((Result.Err<Failure, String>) r).error();
         assertTrue(error.equals(new Failure.Message("a")) || error.equals(new Failure.Message("b")),
                 "error must be one of the task errors, was: " + error);
+    }
+
+    @Test
+    void parallel_propagates_interruption_as_InterruptedException() {
+        // Deterministic: the flag is set before the call, so the scope's join() throws
+        // immediately; the task blocked on the never-opened latch is cancelled on close.
+        var neverOpened = new CountDownLatch(1);
+
+        Thread.currentThread().interrupt();
+        try {
+            assertThrows(InterruptedException.class, () -> Scopes.parallel(
+                    List.<Supplier<? extends Result<Failure, Integer>>>of(() -> {
+                        try {
+                            neverOpened.await();
+                        } catch (InterruptedException expected) {
+                            Thread.currentThread().interrupt();
+                        }
+                        return Result.ok(1);
+                    }),
+                    t -> new Failure.Message("x")));
+        } finally {
+            // Drain the interrupt flag so other tests are unaffected.
+            //noinspection ResultOfMethodCallIgnored
+            Thread.interrupted();
+        }
+    }
+
+    @Test
+    void race_propagates_interruption_as_InterruptedException() {
+        var neverOpened = new CountDownLatch(1);
+
+        Thread.currentThread().interrupt();
+        try {
+            assertThrows(InterruptedException.class, () -> Scopes.race(
+                    List.<Supplier<? extends Result<Failure, String>>>of(() -> {
+                        try {
+                            neverOpened.await();
+                        } catch (InterruptedException expected) {
+                            Thread.currentThread().interrupt();
+                        }
+                        return Result.ok("never");
+                    }),
+                    t -> new Failure.Message("x")));
+        } finally {
+            // Drain the interrupt flag so other tests are unaffected.
+            //noinspection ResultOfMethodCallIgnored
+            Thread.interrupted();
+        }
     }
 
     @Test
