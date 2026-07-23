@@ -432,3 +432,64 @@ final in 21. Only `Scopes` forced Java 25 — and not merely 25:
 - `CLAUDE.md` — language-version, preview-features, checked-exceptions rows;
   bounded-scope and testing sections.
 - `README.md` — intro, type table (shelved note), requirements.
+
+---
+
+## ADR-4 (2026-07-23): Build & release pipeline — GitHub Actions → Maven Central
+
+### Context
+
+The library needs a repeatable path from a git tag to a signed artifact on Maven
+Central. Since mid-2025, OSSRH is sunset and publishing goes through the Sonatype
+**Central Portal**, which has no first-party Gradle plugin. The dependency rules
+say build deps are "Gradle plugins only" and any new dep needs an ADR — this is
+that ADR.
+
+### Decision
+
+- **Plugin: `com.vanniktech.maven.publish` 0.37.0** (build-time only; the
+  published artifact still has zero runtime deps). It wires the Central Portal
+  upload/validate/release flow, sources+javadoc jars, POM, and GPG signing
+  behind one `mavenPublishing` block, and is the de-facto standard for
+  Portal-era Gradle publishing.
+- **CI workflow** (`ci.yml`): `./gradlew build` on a JDK **21 + 25 matrix**
+  (toolchain overridable via `-PtoolchainJdk`), so the Java 21 floor from ADR-3
+  is continuously proven on a real 21 JVM, not just via `--release 21`.
+- **Release workflow** (`release.yml`): triggered by `v*` tags. The version is
+  derived from the tag (`v1.2.3` → `-Pversion=1.2.3`; `-SNAPSHOT` tags are
+  refused); `gradle.properties` keeps a `-SNAPSHOT` placeholder. Publishes with
+  `automaticRelease = true` (no manual portal click) and creates a GitHub
+  release with generated notes.
+- **Secrets**: `MAVEN_CENTRAL_USERNAME`/`MAVEN_CENTRAL_PASSWORD` (portal user
+  token) and `SIGNING_KEY`/`SIGNING_KEY_PASSWORD` (in-memory ASCII-armored GPG
+  key). One-time account/namespace/key setup is documented in `RELEASING.md`.
+
+### Consequences
+
+- A release is one command (`git tag vX.Y.Z && git push origin vX.Y.Z`) from a
+  green main; humans keep the decision, automation keeps the mechanics.
+- `withSourcesJar()`/`withJavadocJar()` moved from the `java` extension to the
+  plugin's publication config (it configures both; declaring them twice
+  conflicts).
+- The plugin is a build-time trust dependency. Accepted: it never touches the
+  produced class files (verifiable — the jar contains only `dev.fforj` classes),
+  and it is replaceable by hand-rolled `maven-publish` + Portal REST calls if it
+  is ever abandoned.
+
+### Alternatives considered
+
+- **Hand-rolled `maven-publish` + `signing` + Portal API via curl**: zero new
+  plugins, but reimplements upload/validation/polling logic in bash — more
+  surface to get subtly wrong than the plugin adds in trust.
+- **JReleaser**: does far more (changelogs, announcements, multi-registry) than
+  a one-artifact library needs — surface-area trap.
+- **`com.gradleup.nmcp`**: thinner Portal wrapper, but leaves POM/signing/jar
+  wiring manual; the vanniktech plugin covers the whole path with less config.
+
+### Files to change
+
+- `build.gradle.kts` — plugin, `mavenPublishing` block, toolchain property.
+- `gradle.properties` — group/version (CLI-overridable).
+- `gradle/libs.versions.toml` — `[plugins]` section.
+- `.github/workflows/ci.yml`, `.github/workflows/release.yml` — new.
+- `RELEASING.md` — new. `README.md` — badges + dependency coordinates.

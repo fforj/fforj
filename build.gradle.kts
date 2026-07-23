@@ -1,16 +1,19 @@
 plugins {
     `java-library`
+    alias(libs.plugins.mavenPublish)
 }
 
-group = "dev.fforj"
-version = "0.1.0-SNAPSHOT"
+// group and version come from gradle.properties; the release workflow overrides
+// version from the git tag with -Pversion=X.Y.Z.
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(25)
+        // Default JDK for dev machines; CI overrides with -PtoolchainJdk=21|25 to
+        // prove the suite passes on the actual floor JDK, not just via --release.
+        val toolchainJdk = providers.gradleProperty("toolchainJdk").map(String::toInt).getOrElse(25)
+        languageVersion = JavaLanguageVersion.of(toolchainJdk)
     }
-    withSourcesJar()
-    withJavadocJar()
+    // sourcesJar/javadocJar are configured by the maven-publish plugin below.
 }
 
 // Target Java 21 LTS (ADR-3): the toolchain compiles and runs tests on a newer JDK,
@@ -31,6 +34,48 @@ tasks.withType<Javadoc>().configureEach {
     // House style is "a short paragraph on intent" per public member, not exhaustive
     // @param/@return tags — keep doclint's real checks but drop the 'missing' group.
     (options as StandardJavadocDocletOptions).addStringOption("Xdoclint:all,-missing", "-quiet")
+}
+
+mavenPublishing {
+    // Uploads to the Central Portal and releases the validated deployment in one task
+    // (publishToMavenCentral). Credentials and the signing key arrive as
+    // ORG_GRADLE_PROJECT_* environment variables in CI — see RELEASING.md.
+    publishToMavenCentral(automaticRelease = true)
+    signAllPublications()
+
+    coordinates(group.toString(), "fforj", version.toString())
+
+    pom {
+        name.set("fforj")
+        description.set(
+            "ﬀorj — functional for Java. Result, Validated, NonEmptyList, Retry " +
+                    "on Java 21+. Zero runtime dependencies."
+        )
+        inceptionYear.set("2026")
+        url.set("https://github.com/fforj/fforj")
+
+        licenses {
+            license {
+                name.set("MIT License")
+                url.set("https://opensource.org/license/mit/")
+                distribution.set("repo")
+            }
+        }
+
+        developers {
+            developer {
+                id.set("tibtof")
+                name.set("Tiberiu Tofan")
+                url.set("https://github.com/tibtof")
+            }
+        }
+
+        scm {
+            url.set("https://github.com/fforj/fforj")
+            connection.set("scm:git:git://github.com/fforj/fforj.git")
+            developerConnection.set("scm:git:ssh://git@github.com/fforj/fforj.git")
+        }
+    }
 }
 
 repositories {

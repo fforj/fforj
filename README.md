@@ -1,5 +1,8 @@
 # ﬀorj — functional for Java
 
+[![CI](https://github.com/fforj/fforj/actions/workflows/ci.yml/badge.svg)](https://github.com/fforj/fforj/actions/workflows/ci.yml)
+[![Maven Central](https://img.shields.io/maven-central/v/dev.fforj/fforj)](https://central.sonatype.com/artifact/dev.fforj/fforj)
+
 Java 21+ FP essentials, no nonsense: four small types you'd otherwise re-implement
 in every project. Zero runtime dependencies. Stdlib only. Nothing preview-flagged —
 every class loads on any JDK from 21 up.
@@ -121,6 +124,28 @@ parser, and `head()` is total because emptiness is unrepresentable.
 - **No tagless-final, type classes, HKTs, or higher-rank polymorphism.** Java's type
   system doesn't support them; emulating them produces hostile code.
 
+## Get it
+
+```kotlin
+// Gradle
+dependencies {
+    implementation("dev.fforj:fforj:<version>")
+}
+```
+
+```xml
+<!-- Maven -->
+<dependency>
+    <groupId>dev.fforj</groupId>
+    <artifactId>fforj</artifactId>
+    <version><!-- version --></version>
+</dependency>
+```
+
+Or don't: every class stands alone by design — copying the source of the types you
+need into your own project (package renamed) gives you the exact same behavior.
+That's not a workaround, it's a supported way to consume the library.
+
 ## Requirements
 
 - Java 21 or newer (the jar is compiled with `--release 21`; no preview flags)
@@ -131,6 +156,9 @@ parser, and `head()` is total because emptiness is unrepresentable.
 ```sh
 ./gradlew test
 ```
+
+Releases are tag-driven (`git push origin vX.Y.Z` publishes to Maven Central) —
+see [RELEASING.md](RELEASING.md).
 
 ## License
 

@@ -1,5 +1,9 @@
 [versions]
 junit = "5.12.2"
+mavenPublish = "0.37.0"
+
+[plugins]
+mavenPublish = { id = "com.vanniktech.maven.publish", version.ref = "mavenPublish" }
 
 [libraries]
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
