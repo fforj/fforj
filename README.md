@@ -29,8 +29,21 @@ Three tools, by the shape of your steps:
 - **Steps that return `Result`** → `Result.binding`: call `bind.on(step())` to get the raw
   value, the first `Err` aborts the block. `bind.on(optional, () -> err)` binds
   `Optional`-returning steps in the same block.
-- **Independent values** → `zip` (and on `Validated`, `zip` accumulates errors instead of
+- **Independent validations, all errors at once** → `Validated.accumulate`: bind each
+  piece with `acc.on(...)` (failures record, later validations still run), unwrap with
+  `.value()` at the end. Arity-free alternative to chained `zip`s.
+- **Two values** → `zip` (and on `Validated`, `zip` accumulates errors instead of
   short-circuiting).
+
+```java
+Validated<Failure, Form> form = Validated.accumulate(acc -> {
+    var name  = acc.on(validateName(raw));    // Invalid -> recorded, keeps going
+    var email = acc.on(validateEmail(raw));   // still runs
+    var age   = acc.on(validateAge(raw));     // still runs
+    return new Form(name.value(), email.value(), age.value());
+});
+// Invalid([nameError, emailError, ageError]) if all three failed
+```
 
 ```java
 Result<Failure, Summary> r = Result.binding(bind -> {
@@ -43,6 +56,36 @@ Result<Failure, Summary> r = Result.binding(bind -> {
 
 Bridges: `Result.fromOptional(opt, ifEmpty)` lifts an `Optional` in; `result.okValue()` /
 `result.errValue()` drop back down to `Optional`.
+
+### Parse, don't validate
+
+The intended way to use all of the above (after [Alexis King's essay][pdv]): don't
+*check* a property and throw the evidence away — *parse* the input into a type that
+makes the property unrepresentable, once, at the boundary.
+
+```java
+public record Email(String value) {
+    public Email {                                          // the wall: an illegal
+        if (!value.contains("@"))                           // Email cannot exist
+            throw new IllegalArgumentException("not an email: " + value);
+    }
+    public static Result<Failure, Email> parse(String raw) { // the door: typed errors
+        return Result.attempt(() -> new Email(raw), t -> new Failure.Malformed(raw));
+    }
+}
+
+Validated<Failure, Registration> reg = Validated.accumulate(acc -> {
+    var email = acc.on(Email.parse(rawEmail));     // every field error surfaces at once
+    var age   = acc.on(Age.parse(rawAge));
+    return new Registration(email.value(), age.value());
+});
+```
+
+Downstream code takes `Registration`, never re-checks anything, and has no error path —
+the proof lives in the type. `NonEmptyList` is the canonical case: `fromList` is the
+parser, and `head()` is total because emptiness is unrepresentable.
+
+[pdv]: https://lexi-lambda.github.io/blog/2019/11/05/parse-don-t-validate/
 
 ## What is *not* here
 

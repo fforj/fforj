@@ -1,8 +1,11 @@
 package dev.fforj;
 
+import java.util.ArrayList;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.BiFunction;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * Like {@link Result}, but the {@code Invalid} case accumulates ALL errors instead of
@@ -57,6 +60,127 @@ public sealed interface Validated<E, T> {
             case Result.Ok<E, T> ok -> new Valid<>(ok.value());
             case Result.Err<E, T> err -> new Invalid<>(NonEmptyList.of(err.error()));
         };
+    }
+
+    /**
+     * A value bound inside an {@link #accumulate(Function) accumulate} block, not yet
+     * unwrapped.
+     *
+     * <p>Binding ({@link Accumulator#on}) and unwrapping ({@link #value()}) are separate
+     * steps on purpose: binding never aborts the block — it only records the error — so
+     * every validation gets a chance to run and contribute its error before the first
+     * unwrap of a failed binding stops the block. Bind everything first, unwrap at the end.
+     */
+    @FunctionalInterface
+    interface Bound<T> {
+        /**
+         * Unwrap: returns the bound value if its validation succeeded; if it failed,
+         * aborts the enclosing {@code accumulate} block, which then evaluates to
+         * {@link Invalid} carrying every error accumulated so far. Only legal while the
+         * surrounding {@code accumulate} call is on the stack.
+         */
+        T value();
+    }
+
+    /** The binding handle passed to {@link #accumulate(Function)}. */
+    interface Accumulator<E> {
+
+        /**
+         * Bind a {@code Validated}: a {@code Valid}'s value becomes available via
+         * {@link Bound#value()}; an {@code Invalid}'s errors are added to the
+         * accumulator. Binding never aborts the block — later validations still run.
+         */
+        <T> Bound<T> on(Validated<E, T> validated);
+
+        /** Bind a {@link Result}: {@code Err} accumulates as a single error. */
+        default <T> Bound<T> on(Result<E, T> result) {
+            return on(fromResult(result));
+        }
+
+        /** Bind an {@link Optional}: empty accumulates {@code ifEmpty.get()}. */
+        default <T> Bound<T> on(Optional<? extends T> maybe, Supplier<? extends E> ifEmpty) {
+            return on(fromResult(Result.fromOptional(maybe, ifEmpty)));
+        }
+    }
+
+    /**
+     * Error-accumulation DSL: validate several independent pieces as straight-line code
+     * and surface <em>every</em> failure at once — the {@code Validated} counterpart of
+     * {@code Result.binding}, and the arity-free alternative to chained
+     * {@link #zip(Validated, BiFunction) zip} calls.
+     *
+     * <p>Inside the block, {@code acc.on(...)} binds each validation and returns a
+     * {@link Bound} handle. A failed binding records its errors and keeps going, so every
+     * validation runs. Unwrap the handles with {@link Bound#value()} once everything is
+     * bound; the first unwrap of a failed binding ends the block. The result is
+     * {@link Valid} of the block's return value only if <em>no</em> binding failed,
+     * otherwise {@link Invalid} with all errors in binding order:
+     * <pre>{@code
+     * Validated<Failure, Form> form = Validated.accumulate(acc -> {
+     *     var name  = acc.on(validateName(raw));    // Invalid -> recorded, no abort
+     *     var email = acc.on(validateEmail(raw));   // still runs
+     *     var age   = acc.on(validateAge(raw));     // still runs
+     *     return new Form(name.value(), email.value(), age.value());
+     * });
+     * // form == Invalid([nameError, emailError, ageError]) if all three failed
+     * }</pre>
+     *
+     * <p><strong>Bind first, unwrap last.</strong> Interleaving ({@code acc.on(a).value()}
+     * before binding {@code b}) silently degrades to short-circuiting: a failed unwrap
+     * aborts before later validations bind. Dependent validations belong in
+     * {@code Result.binding}; this DSL is for independent ones.
+     *
+     * <p>The abort uses the same private control-flow exception mechanism as
+     * {@code Result.binding} (see ADR-1), with the same caveat: don't wrap unwraps in a
+     * catch-all {@code catch (RuntimeException e)}, and don't let {@code Bound} handles
+     * escape the block.
+     *
+     * @param block receives the {@link Accumulator} and returns the composed value.
+     * @return {@link Valid} of the block's return value, or {@link Invalid} carrying all
+     *         accumulated errors in binding order.
+     */
+    static <E, T> Validated<E, T> accumulate(Function<? super Accumulator<E>, ? extends T> block) {
+        Objects.requireNonNull(block, "accumulate block must not be null");
+
+        // Same shape as Result.binding's Halt (ADR-1): local class, no stack trace.
+        // Carries no payload — the errors live in the accumulator list.
+        final class Halt extends RuntimeException {
+            Halt() {
+                super(null, null, false, false);
+            }
+        }
+
+        var errors = new ArrayList<E>();
+
+        var acc = new Accumulator<E>() {
+            @Override
+            public <U> Bound<U> on(Validated<E, U> validated) {
+                return switch (validated) {
+                    case Valid<E, U> valid -> valid::value;
+                    case Invalid<E, U> invalid -> {
+                        errors.addAll(invalid.errors().toList());
+                        yield () -> { throw new Halt(); };
+                    }
+                };
+            }
+        };
+
+        T outcome;
+        try {
+            outcome = block.apply(acc);
+        } catch (Halt halt) {
+            // Unreachable with empty errors: Halt is only thrown by a failed binding,
+            // which always records its errors first.
+            return new Invalid<>(new NonEmptyList<>(
+                    errors.getFirst(), errors.subList(1, errors.size())));
+        }
+        if (errors.isEmpty()) {
+            return new Valid<>(outcome);
+        }
+        // The block completed without unwrapping any failed binding, but failures were
+        // recorded — the result is still Invalid; accumulation doesn't depend on unwraps.
+        return new Invalid<>(new NonEmptyList<>(
+                errors.getFirst(), errors.subList(1, errors.size())));
     }
 
     // ---------------------------------------------------------------------

@@ -227,3 +227,91 @@ type, no locked-decision tension); they live here only because they round out th
 
 Files: `src/main/java/dev/fforj/Result.java` (added `fromOptional` + the `Binder`
 overload); `src/test/java/dev/fforj/ResultTest.java` (four bridge tests).
+
+---
+
+## ADR-2 (2026-06-05): `Validated.accumulate` — error-accumulation DSL
+
+### Context
+
+Combining N independent validations with `Validated.zip` works at arity 2 but degrades
+fast above it: building a 3-field record forces currying gymnastics (see the
+`IntFunction` cast in `ValidatedTest.real_world_form_validation_accumulates_all_problems_at_once`).
+Vavr solves this with arity-fixed `Validation.combine(...).ap(f)` overloads; Arrow (Kotlin)
+solves it with the `accumulate { accumulating { ... }.value }` Raise DSL. The requester
+pointed at Arrow's shape (via tibtof/fun-vs-framework's
+`CategorizedTransactionController`) and asked for the same against `Validated`.
+
+ADR-1 already established the do-notation mechanism for the short-circuiting case
+(`Result.binding`). This decision extends the same mechanism — not a new carve-out — to
+the accumulating case, where the crucial extra requirement is that a failure must NOT
+stop later validations from running and contributing their errors.
+
+### Decision
+
+Add to `Validated` (no new public top-level type; the five-type budget is unchanged):
+
+```java
+@FunctionalInterface
+interface Bound<T> {                       // a bound-but-not-yet-unwrapped value
+    T value();                             // unwrap; aborts the block if its binding failed
+}
+
+interface Accumulator<E> {                 // the handle passed to the block
+    <T> Bound<T> on(Validated<E, T> validated);                                  // primary
+    default <T> Bound<T> on(Result<E, T> result) { ... }                         // bridge
+    default <T> Bound<T> on(Optional<? extends T> maybe, Supplier<? extends E> ifEmpty) { ... }
+}
+
+static <E, T> Validated<E, T> accumulate(Function<? super Accumulator<E>, ? extends T> block);
+```
+
+The two-phase shape is the design's core: **binding** (`acc.on`) is total — a failed
+validation records its errors into the accumulator and returns a poisoned `Bound`, so
+every validation runs; **unwrapping** (`.value()`) is where a failure finally aborts,
+via the same local, stack-trace-free control-flow exception as ADR-1's `Halt`. The
+result is `Valid(blockResult)` only when zero bindings failed; otherwise `Invalid`
+carrying ALL errors in binding order — including when the block completes without ever
+unwrapping a failed handle (accumulation must not depend on unwraps).
+
+Idiom (documented in the Javadoc): **bind first, unwrap last.** Interleaving degrades
+to short-circuiting; dependent steps belong in `Result.binding`.
+
+Test plan (covered, 8 cases): all-valid composition; all errors in binding order;
+later validations run after an earlier failure; unwrap aborts the rest of the block;
+`Result`/`Optional` bridge overloads accumulate alongside `Validated`; a multi-error
+`Invalid` contributes every error; invalid-without-unwrap still yields `Invalid`; the
+real-world form test rewritten without arity gymnastics.
+
+### Consequences
+
+- N-ary validation reads as straight-line record construction; `zip` remains for the
+  two-value case and as the algebraic primitive underneath.
+- Same ADR-1 caveats apply and are documented: catch-all `catch (RuntimeException)`
+  around an unwrap swallows the abort; `Bound` handles must not escape their block
+  (`value()` after `accumulate` returns throws an unclassifiable control exception).
+- The "bind first, unwrap last" idiom is a convention the compiler cannot enforce —
+  the price of straight-line syntax in Java. The Javadoc states it loudly.
+- Forward compat: same as ADR-1 — a future Java with value-carrying extraction could
+  reimplement this without the exception while keeping the signature.
+
+### Alternatives considered
+
+- **Arity-fixed `zipN` overloads (`zip3`..`zip8`, Vavr-style `combine`)**: rejected.
+  Eight near-identical overloads is exactly the Vavr surface-area trap CLAUDE.md exists
+  to prevent, and it still caps composition at the largest arity shipped.
+- **`Validated.sequence(List<Validated<E,T>>)`**: rejected as the *general* answer — it
+  only handles homogeneous lists, not "three differently-typed fields into one record".
+  (It may still earn its place later as a small utility; separate decision.)
+- **Reuse `Result.binding` and convert at the end**: rejected. `binding` short-circuits
+  by design; accumulation requires failures to keep the block running, which needs the
+  deferred-unwrap handle.
+- **Eager abort on first unwrap with errors-so-far vs. running the whole block**: the
+  chosen design does both — binding is total, unwrap aborts — which is exactly Arrow's
+  semantics and the reason the bind/unwrap split exists.
+
+### Files to change
+
+- `src/main/java/dev/fforj/Validated.java` — added `Bound`, `Accumulator`, `accumulate`.
+- `src/test/java/dev/fforj/ValidatedTest.java` — eight accumulate tests.
+- `README.md` — accumulation bullet + example in "Composing `Result`s".
