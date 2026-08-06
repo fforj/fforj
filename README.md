@@ -7,6 +7,10 @@ Java 21+ FP essentials, no nonsense: four small types you'd otherwise re-impleme
 in every project. Zero runtime dependencies. Stdlib only. Nothing preview-flagged —
 every class loads on any JDK from 21 up.
 
+**Docs: [fforj.dev](https://fforj.dev)** — guides and Javadoc. Every example there
+is a test in this repo ([`src/test/java/dev/fforj/docs`](src/test/java/dev/fforj/docs)),
+so the docs can't drift from the code.
+
 ## The name
 
 **ﬀorj** is **f**unctional **for** **J**ava — and the `ff` is one character, not

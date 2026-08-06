@@ -78,6 +78,27 @@ mavenPublishing {
     }
 }
 
+// Documentation site: doc-tests in src/test/java/dev/fforj/docs are both tests and
+// the source of every example on fforj.dev. SiteGen.java is a single-file, zero-dep
+// generator run via the plain `java` source launcher — same ethos as the library.
+tasks.register<Exec>("site") {
+    group = "documentation"
+    description = "Generate the fforj.dev site from doc-tests + javadoc into build/site"
+    dependsOn(tasks.test, tasks.javadoc)
+    // The install snippet on the site must show the latest *released* version — the
+    // newest v* tag — not the in-progress -SNAPSHOT from gradle.properties.
+    val releasedVersion = providers.exec {
+        commandLine("git", "describe", "--tags", "--abbrev=0", "--match", "v*")
+    }.standardOutput.asText.map { it.trim().removePrefix("v") }
+        .orElse(version.toString().removeSuffix("-SNAPSHOT"))
+    commandLine(
+        "java", "docs/SiteGen.java",
+        "--version", releasedVersion.get(),
+        "--javadoc", layout.buildDirectory.dir("docs/javadoc").get().asFile.path,
+        "--out", layout.buildDirectory.dir("site").get().asFile.path,
+    )
+}
+
 repositories {
     mavenCentral()
 }

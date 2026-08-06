@@ -111,7 +111,9 @@ reference to the constructor argument.
 ## Testing
 
 - Vendor: JUnit Jupiter.
-- One `*Test.java` per source `*.java`.
+- One `*Test.java` per source `*.java`. Exception: `src/test/java/dev/fforj/docs/`
+  holds `*DocTest.java` doc-tests — guide articles whose examples are real tests,
+  extracted into the fforj.dev site by `docs/SiteGen.java` (ADR-5).
 - Tests describe behavior (`zip_accumulates_errors_from_both_sides`), not method
   names (`testZip`).
 - Test the contract, not the implementation. Don't assert internal field values
@@ -142,6 +144,7 @@ Adding any new dep — runtime, test, or build — requires an ADR (PR + entry i
 ./gradlew test          # JUnit tests
 ./gradlew build         # compile + test + jar + sourcesJar + javadocJar
 ./gradlew check         # test + (future: lint, spotless)
+./gradlew site          # docs site from doc-tests + javadoc -> build/site (ADR-5)
 ./gradlew clean         # wipe build/
 ```
 

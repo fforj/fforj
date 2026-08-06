@@ -493,3 +493,79 @@ that ADR.
 - `gradle/libs.versions.toml` — `[plugins]` section.
 - `.github/workflows/ci.yml`, `.github/workflows/release.yml` — new.
 - `RELEASING.md` — new. `README.md` — badges + dependency coordinates.
+
+---
+
+## ADR-5 (2026-08-06): Documentation site — doc-tests as the single source of truth
+
+### Context
+
+The library needs a documentation site (`fforj.dev`): published Javadoc plus
+guides with examples. The standing failure mode of hand-written docs is rot —
+examples that no longer compile or no longer behave as described. The requester
+asked for docs kept in sync with the repo mechanically: examples that are tests,
+extracted for the website, with the test source itself serving as the example.
+
+No mainstream Java tool does this direction. Javadoc's `{@snippet}` (JEP 413)
+embeds compiled regions into API docs but produces no site and no tests; Kotlin's
+Knit and Scala's mdoc are the JVM-adjacent equivalents in other languages. The
+tests→website direction for Java is an open niche.
+
+### Decision
+
+- **Doc-tests**: guides live in `src/test/java/dev/fforj/docs/*DocTest.java`.
+  Prose is written in `///` markdown comment blocks (plain line comments — they
+  compile on Java 21 and are invisible to javadoc); every example is the body of
+  a real `@Test` method run by the normal suite; members marked with a preceding
+  `// site:include` line render as code too. Front matter (`title`, `slug`,
+  `order`, `summary`) rides the first `///` block; a `[landing]` marker picks the
+  homepage example.
+- **Generator**: `docs/SiteGen.java` — a single-file, zero-dependency Java
+  program run via the plain source launcher (`java docs/SiteGen.java`), mirroring
+  the library's copy-paste ethos. It parses doc-tests, interleaves prose and
+  extracted code in source order, renders a markdown subset and a small Java
+  highlighter, and folds `javadoc` output in under `/api/`. No Node, no static
+  site framework, no new build plugin.
+- **Gradle**: a `site` task (`test` + `javadoc` + generator). The install snippet
+  shows the latest released version, derived from the newest `v*` git tag — not
+  the working `-SNAPSHOT`.
+- **Deploy**: `.github/workflows/site.yml` deploys `build/site` to GitHub Pages
+  on every push to `main`, custom domain `fforj.dev`. Because `site` depends on
+  `test`, a broken example can never reach the website.
+- **Design**: type-specimen identity around the ﬀ ligature; rubrication (red-ink
+  emphasis from early printing) as the accent system; Newsreader for prose,
+  JetBrains Mono with ligatures for code.
+
+### Consequences
+
+- Examples cannot rot: editing a doc-test re-renders the site; breaking one
+  breaks CI. The site says so ("every example on this site is a test").
+- Prose quality is bounded by the markdown subset the generator supports
+  (headings, paragraphs, lists, links, inline code, bold/italic). Acceptable for
+  guide-length writing; extend the renderer when a real need appears.
+- The doc-test format (front matter, `site:include`, `[landing]`) is deliberately
+  tool-shaped: if it proves out, the generator can be extracted into a reusable
+  fforj-org tool as a separate project — a possible answer to the empty
+  tests→docs niche in Java. Extraction is a future decision, not this one;
+  generalizing before a second consumer exists is the same trap the library's
+  bounded-scope rule guards against.
+- The `*DocTest` classes are additional tests, an exception to the
+  "one `*Test.java` per source file" convention (noted in CLAUDE.md).
+
+### Alternatives considered
+
+- **Hand-written markdown site (MkDocs/Antora/Jekyll)**: fastest to start, but
+  reintroduces doc rot — the exact problem the requester asked to eliminate —
+  and drags in a non-JVM toolchain.
+- **Javadoc `{@snippet}` with external snippet files**: keeps API-doc examples
+  compiling, but produces no guides/website, and snippet files aren't tests.
+  May still be adopted *inside* the library's Javadoc later; complementary.
+- **Adopt Knit/mdoc-style markdown→tests**: wrong direction — the markdown
+  stays primary and the tests are generated, so the site and the suite can
+  still drift apart at the seam; and neither tool targets Java sources.
+
+### Files to change
+
+- `src/test/java/dev/fforj/docs/{Result,Validated,NonEmptyList,Retry}DocTest.java` — new.
+- `docs/SiteGen.java` — new. `build.gradle.kts` — `site` task.
+- `.github/workflows/site.yml` — new. `CLAUDE.md`, `README.md` — pointers.
