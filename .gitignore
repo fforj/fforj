@@ -24,3 +24,14 @@ hs_err_pid*
 # Output
 out/
 target/
+
+
+# APM dependencies
+apm.lock.yaml
+apm_modules/
+.opencode/
+.github/
+.claude/*
+!.claude/settings.json
+AGENTS.md
+GEMINI.md

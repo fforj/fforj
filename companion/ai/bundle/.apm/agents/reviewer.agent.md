@@ -1,7 +1,11 @@
 ---
 name: reviewer
 description: fforj code reviewer. Invoke when an issue is set Status READY_FOR_REVIEW. Reads the PR diff, the ADR it's implementing, and the locked decisions. Either sets status APPROVED (ready for human merge) or CHANGES_REQUESTED with structured feedback.
-tools: Read, Bash, Glob, Grep
+tools:
+    Read: true
+    Bash: true
+    Glob: true
+    Grep: true
 model: claude-opus-4-8
 ---
 
