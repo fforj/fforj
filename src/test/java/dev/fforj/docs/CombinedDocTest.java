@@ -7,6 +7,7 @@ import dev.fforj.Validated;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.net.SocketTimeoutException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Set;
@@ -45,7 +46,8 @@ class CombinedDocTest {
         record NoItems() implements OrderError {}
         record UnknownCountry(String raw) implements OrderError {}
         record OutOfStock(Sku sku) implements OrderError {}
-        record PaymentFailed(String reason) implements OrderError {}
+        record GatewayTimeout() implements OrderError {}          // transient — worth retrying
+        record PaymentFailed(String reason) implements OrderError {} // terminal — never retry
     }
 
     // site:include
@@ -173,7 +175,10 @@ class CombinedDocTest {
     /// Here is where it all meets. `toResult()` carries the boundary's error *batch*
     /// into the short-circuiting world, and each core step joins the same channel
     /// with `mapErr(NonEmptyList::of)` — a single error is just a batch of one.
-    /// `NonEmptyList` quietly unifies the whole pipeline's error type:
+    /// `NonEmptyList` quietly unifies the whole pipeline's error type. Note the
+    /// `attempt` mapper: it's a pattern match itself, because a timeout is not a
+    /// decline — classifying the throwable *here* is what keeps every later decision
+    /// (like "is this worth retrying?") a matter of types instead of message-parsing:
     // site:include
     static Result<NonEmptyList<OrderError>, String> place(
             RawOrder raw, Set<String> inStock, Gateway gateway) {
@@ -183,7 +188,10 @@ class CombinedDocTest {
             int cents = order.items().size() * 700;
             return bind.on(Result.attempt(
                     () -> gateway.charge(order.email(), cents),
-                    t -> new OrderError.PaymentFailed(t.getMessage()))
+                    t -> switch (t) {
+                        case SocketTimeoutException ignored -> new OrderError.GatewayTimeout();
+                        default -> new OrderError.PaymentFailed(t.getMessage());
+                    })
                     .mapErr(NonEmptyList::of));
         });
     }
@@ -231,7 +239,8 @@ class CombinedDocTest {
                 new OrderError.OutOfStock(new Sku("SKU-9")))), placed);
     }
 
-    /// And a throwing gateway becomes a typed error like everything else:
+    /// And a throwing gateway becomes a typed error like everything else — each kind
+    /// of throwable landing in its own variant:
     @Test
     void a_throwing_gateway_becomes_a_typed_error() {
         var raw = new RawOrder("ada@lovelace.dev", List.of("SKU-1"), "RO");
@@ -242,6 +251,17 @@ class CombinedDocTest {
 
         assertEquals(Result.err(NonEmptyList.of(
                 new OrderError.PaymentFailed("card declined"))), placed);
+    }
+
+    @Test
+    void a_gateway_timeout_becomes_its_own_error_variant() {
+        var raw = new RawOrder("ada@lovelace.dev", List.of("SKU-1"), "RO");
+
+        var placed = place(raw, Set.of("SKU-1"), (email, cents) -> {
+            throw new SocketTimeoutException("read timed out");
+        });
+
+        assertEquals(Result.err(NonEmptyList.of(new OrderError.GatewayTimeout())), placed);
     }
 
     /// ## The response: one exhaustive switch
@@ -268,17 +288,20 @@ class CombinedDocTest {
     ///
     /// One piece was missing from the tour: real gateways time out. `Retry` wraps any
     /// `Result`-returning step — the loop hands the body the current attempt number —
-    /// and because the errors are *typed*, the retry predicate can tell a transient
-    /// timeout (worth retrying) from a declined card (never retry — it won't improve):
+    /// and the retry predicate is where a stringly error type would hurt most: if
+    /// telling transient from terminal meant parsing a message, the type would be
+    /// missing a variant. It isn't, so the predicate is a pattern, and the whole
+    /// retry policy reads off the ADT — `GatewayTimeout` retries, everything else is
+    /// final. (With several transient variants, the predicate grows into an
+    /// exhaustive `switch` table over the error type.)
     @Test
     void a_flaky_gateway_is_retried_but_a_declined_card_would_not_be() throws InterruptedException {
         var policy = Retry.Policy.exponential(4, Duration.ZERO);
 
         Result<OrderError, String> charged = Retry.run(policy,
-                e -> e instanceof OrderError.PaymentFailed(String reason)
-                        && reason.contains("timeout"),
+                e -> e instanceof OrderError.GatewayTimeout,
                 attempt -> attempt < 3
-                        ? Result.err(new OrderError.PaymentFailed("gateway timeout"))
+                        ? Result.err(new OrderError.GatewayTimeout())
                         : Result.ok("receipt-7391 after " + attempt + " tries"));
 
         assertEquals(Result.ok("receipt-7391 after 3 tries"), charged);
