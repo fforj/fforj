@@ -35,7 +35,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 /// [parse, don't validate](https://lexi-lambda.github.io/blog/2019/11/05/parse-don-t-validate/).
 /// Every type has a *wall*, a constructor that makes an illegal value impossible to
 /// construct. The fallible ones also have a *door*: a static `parse` returning
-/// `Validated`, so boundary failures can accumulate:
+/// `Validated`, so boundary failures can accumulate. Each rule is written once, as a
+/// small private predicate the wall and the door both consult. The tempting
+/// alternative, letting `parse` call the constructor and catch the wall's exception,
+/// runs routine validation on exception handling and can mislabel a genuine bug in
+/// the constructor as bad user input:
 class CombinedDocTest {
 
     // site:include
@@ -56,15 +60,19 @@ class CombinedDocTest {
     // site:include
     record Email(String value) {
         Email {                                     // the wall: an illegal Email cannot exist
-            if (!value.contains("@")) {
+            if (!isEmail(value)) {
                 throw new IllegalArgumentException("not an email: " + value);
             }
         }
 
         static Validated<OrderError, Email> parse(String raw) {   // the door: typed errors
-            return raw.contains("@")
+            return isEmail(raw)
                     ? Validated.valid(new Email(raw))
                     : Validated.invalid(new OrderError.BadEmail(raw));
+        }
+
+        private static boolean isEmail(String s) {  // the rule, written once
+            return s.contains("@");
         }
     }
 
@@ -73,30 +81,38 @@ class CombinedDocTest {
         static final Set<String> SHIPS_TO = Set.of("RO", "NL", "DE");
 
         Country {
-            if (!SHIPS_TO.contains(code)) {
+            if (!shipsTo(code)) {
                 throw new IllegalArgumentException("no shipping to: " + code);
             }
         }
 
         static Validated<OrderError, Country> parse(String raw) {
-            return SHIPS_TO.contains(raw)
+            return shipsTo(raw)
                     ? Validated.valid(new Country(raw))
                     : Validated.invalid(new OrderError.UnknownCountry(raw));
+        }
+
+        private static boolean shipsTo(String code) {
+            return SHIPS_TO.contains(code);
         }
     }
 
     // site:include
     record Sku(String code) {
         Sku {
-            if (!code.startsWith("SKU-")) {
+            if (!wellFormed(code)) {
                 throw new IllegalArgumentException("malformed SKU: " + code);
             }
         }
 
         static Validated<OrderError, Sku> parse(String raw) {
-            return raw.startsWith("SKU-")
+            return wellFormed(raw)
                     ? Validated.valid(new Sku(raw))
                     : Validated.invalid(new OrderError.BadSku(raw));
+        }
+
+        private static boolean wellFormed(String code) {
+            return code.startsWith("SKU-");
         }
     }
 

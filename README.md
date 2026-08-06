@@ -92,12 +92,16 @@ makes the property unrepresentable, once, at the boundary.
 
 ```java
 public record Email(String value) {
-    public Email {                                          // the wall: an illegal
-        if (!value.contains("@"))                           // Email cannot exist
+    public Email {                                            // the wall: an illegal
+        if (!isEmail(value))                                  // Email cannot exist
             throw new IllegalArgumentException("not an email: " + value);
     }
     public static Result<AppError, Email> parse(String raw) { // the door: typed errors
-        return Result.attempt(() -> new Email(raw), t -> new AppError.Malformed(raw));
+        return isEmail(raw) ? Result.ok(new Email(raw))
+                            : Result.err(new AppError.Malformed(raw));
+    }
+    private static boolean isEmail(String s) {                // the rule, written once
+        return s.contains("@");
     }
 }
 
