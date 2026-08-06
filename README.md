@@ -138,7 +138,7 @@ parser, and `head()` is total because emptiness is unrepresentable.
 ```kotlin
 // Gradle
 dependencies {
-    implementation("dev.fforj:fforj:0.1.0")
+    implementation("dev.fforj:fforj:0.2.0")
 }
 ```
 
@@ -147,7 +147,7 @@ dependencies {
 <dependency>
     <groupId>dev.fforj</groupId>
     <artifactId>fforj</artifactId>
-    <version>0.1.0</version>
+    <version>0.2.0</version>
 </dependency>
 ```
 
