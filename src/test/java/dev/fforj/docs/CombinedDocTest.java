@@ -267,25 +267,20 @@ class CombinedDocTest {
     /// ## Epilogue: when the gateway is flaky, add Retry
     ///
     /// One piece was missing from the tour: real gateways time out. `Retry` wraps any
-    /// `Result`-returning step, and because the errors are *typed*, the retry
-    /// predicate can tell a transient timeout (worth retrying) from a declined card
-    /// (never retry — it won't improve):
+    /// `Result`-returning step — the loop hands the body the current attempt number —
+    /// and because the errors are *typed*, the retry predicate can tell a transient
+    /// timeout (worth retrying) from a declined card (never retry — it won't improve):
     @Test
     void a_flaky_gateway_is_retried_but_a_declined_card_would_not_be() throws InterruptedException {
-        var calls = new int[]{0};
         var policy = Retry.Policy.exponential(4, Duration.ZERO);
 
         Result<OrderError, String> charged = Retry.run(policy,
                 e -> e instanceof OrderError.PaymentFailed(String reason)
                         && reason.contains("timeout"),
-                () -> {
-                    calls[0]++;
-                    return calls[0] < 3
-                            ? Result.err(new OrderError.PaymentFailed("gateway timeout"))
-                            : Result.ok("receipt-7391");
-                });
+                attempt -> attempt < 3
+                        ? Result.err(new OrderError.PaymentFailed("gateway timeout"))
+                        : Result.ok("receipt-7391 after " + attempt + " tries"));
 
-        assertEquals(Result.ok("receipt-7391"), charged);
-        assertEquals(3, calls[0]);
+        assertEquals(Result.ok("receipt-7391 after 3 tries"), charged);
     }
 }

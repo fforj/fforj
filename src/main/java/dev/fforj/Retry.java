@@ -2,6 +2,7 @@ package dev.fforj;
 
 import java.time.Duration;
 import java.util.Objects;
+import java.util.function.IntFunction;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
@@ -56,12 +57,19 @@ public final class Retry {
      * Run {@code body} up to {@link Policy#maxAttempts} times until it succeeds, the
      * error fails the {@code shouldRetry} predicate, or the caller's thread is interrupted.
      *
+     * <p>The body receives the current <em>attempt number</em>, starting at {@code 1} —
+     * the retry loop owns that counter, so callers never track it in outside mutable
+     * state. Use it for logging ("attempt 3 of 5 failed"), attempt-dependent behavior,
+     * or building it into the success value. When the number doesn't matter, use the
+     * {@link #run(Policy, Predicate, Supplier) Supplier overload}.
+     *
      * @param policy       attempts, delay, backoff.
      * @param shouldRetry  predicate over the error. Return {@code true} to retry on this
      *                     error; {@code false} to surface immediately. Use this to
      *                     distinguish transient failures (rate-limit, 5xx) from terminal
      *                     ones (4xx, validation).
-     * @param body         the operation to run. Must be effectively idempotent.
+     * @param body         the operation to run, given the 1-based attempt number. Must be
+     *                     effectively idempotent.
      * @return the last {@code Result} produced. Always {@code Ok} on success; the most
      *         recent {@code Err} on exhaustion.
      * @throws InterruptedException if the calling thread is interrupted during sleep.
@@ -69,7 +77,7 @@ public final class Retry {
     public static <E, T> Result<E, T> run(
             Policy policy,
             Predicate<? super E> shouldRetry,
-            Supplier<? extends Result<E, T>> body
+            IntFunction<? extends Result<E, T>> body
     ) throws InterruptedException {
         Objects.requireNonNull(policy);
         Objects.requireNonNull(shouldRetry);
@@ -79,7 +87,7 @@ public final class Retry {
         var delay = policy.initialDelay();
 
         for (int attempt = 1; attempt <= policy.maxAttempts(); attempt++) {
-            last = body.get();
+            last = body.apply(attempt);
 
             if (last instanceof Result.Ok<E, T>) {
                 return last;
@@ -96,5 +104,18 @@ public final class Retry {
             }
         }
         return last;
+    }
+
+    /**
+     * {@link #run(Policy, Predicate, IntFunction) run}, for bodies that don't care which
+     * attempt they're on.
+     */
+    public static <E, T> Result<E, T> run(
+            Policy policy,
+            Predicate<? super E> shouldRetry,
+            Supplier<? extends Result<E, T>> body
+    ) throws InterruptedException {
+        Objects.requireNonNull(body);
+        return run(policy, shouldRetry, attempt -> body.get());
     }
 }

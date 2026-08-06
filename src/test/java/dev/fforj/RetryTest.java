@@ -3,6 +3,8 @@ package dev.fforj;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -106,6 +108,30 @@ class RetryTest {
 
         assertEquals(Result.<Err, String>err(Err.Transient), r);
         assertEquals(1, calls[0], "maxAttempts=1 means exactly one call, even on a retryable error");
+    }
+
+    @Test
+    void body_receives_the_attempt_number_starting_at_one() throws InterruptedException {
+        var seen = new ArrayList<Integer>();
+        var policy = Retry.Policy.fixed(3, Duration.ZERO);
+
+        Result<Err, String> r = Retry.run(policy, e -> true, attempt -> {
+            seen.add(attempt);
+            return Result.err(Err.Transient);
+        });
+
+        assertEquals(Result.<Err, String>err(Err.Transient), r);
+        assertEquals(List.of(1, 2, 3), seen);
+    }
+
+    @Test
+    void attempt_number_supports_succeeding_on_a_chosen_attempt_without_external_state() throws InterruptedException {
+        var policy = Retry.Policy.fixed(5, Duration.ZERO);
+
+        Result<Err, String> r = Retry.run(policy, e -> true, attempt ->
+                attempt < 3 ? Result.err(Err.Transient) : Result.ok("attempt " + attempt));
+
+        assertEquals(Result.<Err, String>ok("attempt 3"), r);
     }
 
     @Test

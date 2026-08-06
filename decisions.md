@@ -615,3 +615,23 @@ visible):
 - The `/v/` archive starts at 0.1.0 (bootstrapped from current main, whose
   library sources are identical to the v0.1.0 tag; the tag itself predates the
   doc-test infrastructure).
+
+---
+
+## ADR-0 addendum (2026-08-06): `Retry.run` attempt-aware overload
+
+PR-level addition in the spirit of the ADR-1 `fromOptional` addendum (no new
+type, no locked-decision tension). The `Supplier` body couldn't see which
+attempt it was on, so every example and caller that cared smuggled a counter in
+via outside mutable state (`new int[]{0}` — the exact noise the library exists
+to delete). The requester asked for the counter to live in the retry itself.
+
+Where it lives matters: **not in `Policy`** — a `Policy` is an immutable value
+meant to be shared across concurrent calls, so a counter there would be shared
+mutable state. The attempt count belongs to a single run, so it flows as the
+body's argument: a new primary overload
+`run(Policy, Predicate, IntFunction<? extends Result<E,T>>)` hands the body the
+1-based attempt number; the existing `Supplier` overload delegates to it for
+bodies that don't care. Overload resolution is unambiguous (arity 0 vs 1
+lambdas). Doc examples rewritten counter-free; two new unit tests pin the
+attempt sequence.

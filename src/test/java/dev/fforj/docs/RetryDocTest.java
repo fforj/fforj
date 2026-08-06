@@ -30,18 +30,16 @@ class RetryDocTest {
     ///
     /// A `Policy` is three numbers: total attempts, initial delay, backoff factor.
     /// The operation returns `Result`, so "failed this time" is a value, not an
-    /// exception — and the final outcome is just the last `Result` produced.
+    /// exception — and the retry loop owns the attempt counter, handing the body the
+    /// current attempt number so you never track one in outside mutable state:
     @Test
     void succeed_on_a_later_attempt() throws InterruptedException {
         var policy = Retry.Policy.exponential(5, Duration.ZERO);
-        var calls = new int[]{0};
 
-        Result<ApiError, String> r = Retry.run(policy, e -> true, () -> {
-            calls[0]++;
-            return calls[0] < 3
-                    ? Result.err(ApiError.RateLimited)
-                    : Result.ok("fetched on attempt " + calls[0]);
-        });
+        Result<ApiError, String> r = Retry.run(policy, e -> true, attempt ->
+                attempt < 3
+                        ? Result.err(ApiError.RateLimited)
+                        : Result.ok("fetched on attempt " + attempt));
 
         assertEquals(Result.ok("fetched on attempt 3"), r);
     }
@@ -50,22 +48,21 @@ class RetryDocTest {
     ///
     /// The predicate looks at the *typed* error and decides. A rate limit is worth
     /// waiting out; a bad API key never fixes itself — retrying it three times just
-    /// adds latency to the same failure. Terminal errors surface immediately.
+    /// adds latency to the same failure. Terminal errors surface immediately — this
+    /// example proves it in the value: a second attempt would return `Ok`, so the
+    /// `Err` in the assertion is evidence no second attempt ever ran.
     @Test
     void give_up_immediately_on_terminal_errors() throws InterruptedException {
         var policy = Retry.Policy.fixed(5, Duration.ZERO);
-        var calls = new int[]{0};
 
         Result<ApiError, String> r = Retry.run(
                 policy,
                 e -> e == ApiError.RateLimited,     // only transient errors retry
-                () -> {
-                    calls[0]++;
-                    return Result.err(ApiError.InvalidApiKey);
-                });
+                attempt -> attempt == 1
+                        ? Result.err(ApiError.InvalidApiKey)
+                        : Result.ok("a second attempt would have succeeded"));
 
         assertEquals(Result.err(ApiError.InvalidApiKey), r);
-        assertEquals(1, calls[0]);                  // one call, no wasted attempts
     }
 
     /// ## Exhaustion returns the last error
