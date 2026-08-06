@@ -91,7 +91,7 @@ jobs:
         run: |
           git fetch origin main
           git checkout -B main origin/main
-          sed -i -E "s|dev\.fforj:fforj:[0-9][^\"]*|dev.fforj:fforj:${VERSION}|g; s|<version>[^<]*</version>|<version>${VERSION}</version>|g" README.md
+          sed -i -E "s|dev\.fforj:fforj:[0-9][^\"]*|dev.fforj:fforj:${VERSION}|g; s|<version>[^<]*</version>|<version>${VERSION}</version>|g; s|dev\.fforj/fforj/[0-9][^/]*/|dev.fforj/fforj/${VERSION}/|g" README.md
           if ! git diff --quiet README.md; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

@@ -9,7 +9,10 @@ every class loads on any JDK from 21 up.
 
 **Docs: [fforj.dev](https://fforj.dev)**, guides and full Javadoc. Every example there
 is a test in this repo ([`src/test/java/dev/fforj/docs`](src/test/java/dev/fforj/docs)),
-so the docs can't drift from the code.
+so the docs can't drift from the code. If fforj.dev is unreachable (some corporate
+filters block newly registered domains for a while), the Javadoc is mirrored at
+[javadoc.io](https://javadoc.io/doc/dev.fforj/fforj/0.2.0/), and the guides are
+readable at the source link above.
 
 ## The name
 
