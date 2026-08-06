@@ -40,7 +40,7 @@ Repo → Settings → Secrets and variables → Actions → New repository secre
 | `MAVEN_CENTRAL_USERNAME` | user-token username from step 1.4 |
 | `MAVEN_CENTRAL_PASSWORD` | user-token password from step 1.4 |
 | `SIGNING_KEY` | the full ASCII-armored private key block from step 2 |
-| `SIGNING_KEY_PASSWORD` | the key's passphrase |
+| `SIGNING_KEY_PASSWORD` | the key's passphrase — leave this secret **unset** if the key has no passphrase (the workflow passes an empty value through, which is what a passphrase-less key needs) |
 
 ## Cutting a release
 
