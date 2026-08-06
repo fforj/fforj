@@ -44,6 +44,7 @@ class CombinedDocTest {
     sealed interface OrderError {
         record BadEmail(String raw) implements OrderError {}
         record NoItems() implements OrderError {}
+        record BadSku(String raw) implements OrderError {}
         record UnknownCountry(String raw) implements OrderError {}
         record OutOfStock(Sku sku) implements OrderError {}
         record GatewayTimeout() implements OrderError {}          // transient — worth retrying
@@ -85,9 +86,15 @@ class CombinedDocTest {
     // site:include
     record Sku(String code) {
         Sku {
-            if (code.isBlank()) {
-                throw new IllegalArgumentException("blank SKU");
+            if (!code.startsWith("SKU-")) {
+                throw new IllegalArgumentException("malformed SKU: " + code);
             }
+        }
+
+        static Validated<OrderError, Sku> parse(String raw) {
+            return raw.startsWith("SKU-")
+                    ? Validated.valid(new Sku(raw))
+                    : Validated.invalid(new OrderError.BadSku(raw));
         }
     }
 
@@ -95,7 +102,7 @@ class CombinedDocTest {
     record Order(Email email, NonEmptyList<Sku> items, Country country) {}
 
     /// Note what `Order` rules out by shape alone: a malformed email, a country we
-    /// don't ship to, a blank SKU, and — because `items` is a `NonEmptyList` — an
+    /// don't ship to, a malformed SKU, and — because `items` is a `NonEmptyList` — an
     /// order with nothing in it. Downstream code never re-checks any of this; the
     /// proof lives in the types. The wall holds even against code that skips the
     /// door:
@@ -103,23 +110,31 @@ class CombinedDocTest {
     void the_wall_rejects_what_the_door_would() {
         assertThrows(IllegalArgumentException.class, () -> new Email("not-an-email"));
         assertThrows(IllegalArgumentException.class, () -> new Country("XX"));
+        assertThrows(IllegalArgumentException.class, () -> new Sku("junk"));
     }
 
     /// ## The boundary: accumulate everything
     ///
+    /// The items door is *composed from smaller doors*: an empty list is one failure
+    /// (there's nothing to validate item by item), otherwise `Validated.traverse`
+    /// parses every element and reports every bad one — non-empty in, non-empty out,
+    /// so the result is already the `NonEmptyList<Sku>` the domain wants:
+    // site:include
+    static Validated<OrderError, NonEmptyList<Sku>> parseItems(List<String> raws) {
+        return Result.fromOptional(NonEmptyList.fromList(raws), OrderError.NoItems::new)
+                .fold(Validated::invalid, skus -> Validated.traverse(skus, Sku::parse));
+    }
+
     /// Field validations are independent, so a failure in one must not hide a failure
-    /// in another. `accumulate` binds all three doors — and note `NonEmptyList.fromList`
-    /// doing double duty: it *is* the items validation, its empty case accumulating
-    /// `NoItems` alongside whatever else is wrong. The final line assembles the
-    /// domain: `map(Sku::new)` walks through the wall, and non-emptiness survives
-    /// `map` by construction.
+    /// in another. `accumulate` binds the three doors, and the final line assembles
+    /// the domain from already-proven parts:
     // site:include
     static Validated<OrderError, Order> parse(RawOrder raw) {
         return Validated.accumulate(acc -> {
             var email = acc.on(Email.parse(raw.email()));
-            var items = acc.on(NonEmptyList.fromList(raw.skus()), OrderError.NoItems::new);
+            var items = acc.on(parseItems(raw.skus()));
             var country = acc.on(Country.parse(raw.country()));
-            return new Order(email.value(), items.value().map(Sku::new), country.value());
+            return new Order(email.value(), items.value(), country.value());
         });
     }
 
@@ -132,6 +147,20 @@ class CombinedDocTest {
                         new OrderError.BadEmail("not-an-email"),
                         new OrderError.NoItems(),
                         new OrderError.UnknownCountry("XX"))),
+                parse(raw));
+    }
+
+    /// Every malformed item reports individually, alongside the other fields'
+    /// problems — one response, the complete story:
+    @Test
+    void every_malformed_item_is_reported_alongside_other_field_errors() {
+        var raw = new RawOrder("not-an-email", List.of("SKU-1", "junk", "bogus"), "RO");
+
+        assertEquals(
+                Validated.invalid(NonEmptyList.of(
+                        new OrderError.BadEmail("not-an-email"),
+                        new OrderError.BadSku("junk"),
+                        new OrderError.BadSku("bogus"))),
                 parse(raw));
     }
 

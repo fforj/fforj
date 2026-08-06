@@ -2,6 +2,7 @@ package dev.fforj;
 
 import java.time.Duration;
 import java.util.Objects;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.IntFunction;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -26,11 +27,24 @@ public final class Retry {
      * @param maxAttempts    total attempts including the first call. {@code 1} = no retry.
      * @param initialDelay   delay before the first retry.
      * @param backoffFactor  delay multiplier between attempts. {@code 1.0} = fixed delay.
+     * @param maxDelay       upper bound on any single delay after backoff — uncapped
+     *                       exponential backoff gets silly fast. The three-argument
+     *                       constructor defaults it to effectively unbounded.
+     * @param jitter         fraction in {@code [0, 1)}: each sleep is scaled by a
+     *                       uniform random factor in {@code [1 - jitter, 1 + jitter]}
+     *                       to spread synchronized clients ("thundering herds").
+     *                       {@code 0} (the default) means fully deterministic delays —
+     *                       keep it {@code 0} in tests.
      */
-    public record Policy(int maxAttempts, Duration initialDelay, double backoffFactor) {
+    public record Policy(int maxAttempts, Duration initialDelay, double backoffFactor,
+                         Duration maxDelay, double jitter) {
+
+        /** Effectively "no cap": ~292 years. */
+        private static final Duration UNBOUNDED = Duration.ofNanos(Long.MAX_VALUE);
 
         public Policy {
             Objects.requireNonNull(initialDelay);
+            Objects.requireNonNull(maxDelay);
             if (maxAttempts < 1) {
                 throw new IllegalArgumentException("maxAttempts must be >= 1");
             }
@@ -40,6 +54,17 @@ public final class Retry {
             if (initialDelay.isNegative()) {
                 throw new IllegalArgumentException("initialDelay must be >= 0");
             }
+            if (maxDelay.isNegative()) {
+                throw new IllegalArgumentException("maxDelay must be >= 0");
+            }
+            if (jitter < 0.0 || jitter >= 1.0) {
+                throw new IllegalArgumentException("jitter must be in [0, 1)");
+            }
+        }
+
+        /** Uncapped, jitter-free policy — the common starting point. */
+        public Policy(int maxAttempts, Duration initialDelay, double backoffFactor) {
+            this(maxAttempts, initialDelay, backoffFactor, UNBOUNDED, 0.0);
         }
 
         /** Constant delay between retries. */
@@ -50,6 +75,32 @@ public final class Retry {
         /** Exponential backoff (doubling) between retries. */
         public static Policy exponential(int maxAttempts, Duration initialDelay) {
             return new Policy(maxAttempts, initialDelay, 2.0);
+        }
+
+        /** Same policy with every delay capped at {@code maxDelay}. */
+        public Policy withMaxDelay(Duration maxDelay) {
+            return new Policy(maxAttempts, initialDelay, backoffFactor, maxDelay, jitter);
+        }
+
+        /** Same policy with the given jitter fraction (see {@link #jitter}). */
+        public Policy withJitter(double jitter) {
+            return new Policy(maxAttempts, initialDelay, backoffFactor, maxDelay, jitter);
+        }
+
+        /**
+         * The planned delay before the given attempt (the first retry is attempt
+         * {@code 2}): {@code initialDelay} scaled by {@code backoffFactor} once per
+         * prior retry, capped at {@code maxDelay}. Pure and deterministic — jitter is
+         * applied at sleep time by {@link Retry#run}, never here — so retry timing can
+         * be asserted in tests without sleeping through it.
+         */
+        public Duration delayBefore(int attempt) {
+            if (attempt < 2) {
+                throw new IllegalArgumentException(
+                        "delays start before attempt 2 (the first retry)");
+            }
+            double nanos = initialDelay.toNanos() * Math.pow(backoffFactor, attempt - 2);
+            return nanos >= maxDelay.toNanos() ? maxDelay : Duration.ofNanos((long) nanos);
         }
     }
 
@@ -84,7 +135,6 @@ public final class Retry {
         Objects.requireNonNull(body);
 
         Result<E, T> last = null;
-        var delay = policy.initialDelay();
 
         for (int attempt = 1; attempt <= policy.maxAttempts(); attempt++) {
             last = body.apply(attempt);
@@ -98,12 +148,18 @@ public final class Retry {
             }
 
             if (attempt < policy.maxAttempts()) {
-                Thread.sleep(delay);
-                // Multiply via toNanos for sub-millisecond stability.
-                delay = Duration.ofNanos((long) (delay.toNanos() * policy.backoffFactor()));
+                Thread.sleep(jittered(policy.delayBefore(attempt + 1), policy.jitter()));
             }
         }
         return last;
+    }
+
+    private static Duration jittered(Duration delay, double jitter) {
+        if (jitter == 0.0) {
+            return delay;
+        }
+        double factor = 1.0 + ThreadLocalRandom.current().nextDouble(-jitter, jitter);
+        return Duration.ofNanos((long) (delay.toNanos() * factor));
     }
 
     /**

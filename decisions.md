@@ -635,3 +635,93 @@ body's argument: a new primary overload
 bodies that don't care. Overload resolution is unambiguous (arity 0 vs 1
 lambdas). Doc examples rewritten counter-free; two new unit tests pin the
 attempt sequence.
+
+---
+
+## ADR-6 (2026-08-06): DSL completeness — `traverse`, `onEach`, `ensure`, `Validated.mapErr`, `tap`
+
+### Context
+
+Writing the documentation site (ADR-5) put the DSLs through sustained real use,
+which surfaced four gaps. (1) Validating *every element of a collection* and
+accumulating all their errors — the traverse shape — had no clean expression;
+the capstone guide had to dodge it. (2) Rules with no value to bind (limits,
+guards, permissions) forced wrapping a dummy value in `Validated`/`Result`.
+(3) `Validated` had no error-side map, an asymmetry with `Result.mapErr` felt
+exactly where batches get translated for API boundaries. (4) Observing a chain
+for logging/metrics meant breaking it. All four are method-level additions; no
+new types; the five-type budget (four-plus-one-reserved) is unchanged.
+
+### Decision
+
+- **`Validated.traverse(List, f)`** — the accumulative traverse: `Valid` of the
+  parsed list only if every element passed, else `Invalid` with every failing
+  element's errors in input order. Empty list is trivially `Valid`. An overload
+  **`traverse(NonEmptyList, f)`** carries non-emptiness through.
+- **`Accumulator.onEach(list, f)`** — DSL form, literally `on(traverse(...))`.
+- **`Accumulator.ensure(condition, errorSupplier)`** — false records the error,
+  the block keeps running. **`Binder.ensure`** — false short-circuits, exactly
+  like binding an `Err`. (The most-used primitive in Arrow's Raise after bind.)
+- **`Validated.mapErr(f)`** — maps every error in the batch, preserves `Valid`.
+- **`Result.tap`/`tapErr`** — observe one case, return `this` unchanged.
+
+### Consequences
+
+- The capstone guide now validates every SKU individually via a door composed
+  from smaller doors (`fromOptional` + `fold` + `traverse`), and the guides
+  gained onEach/ensure/mapErr sections — all examples tests, as always.
+- `tap`/`tapErr` is a deliberate, bounded concession to observability; the next
+  "just one more combinator" still needs to clear the missing-primitive bar.
+
+### Alternatives considered
+
+- **`sequence(List<Validated<E,T>>)`**: subsumed — it's `traverse(list, identity)`;
+  add only if identity-traverse turns out to dominate usage.
+- **Arity-fixed `zipN`**: still rejected (ADR-2); `accumulate` + `onEach` cover it.
+- **`Validated.tap`**: skipped until asked for; `fold` covers observation there.
+
+### Files to change
+
+- `Validated.java`, `Result.java` — the methods above.
+- `ValidatedTest.java`, `ResultTest.java` — 14 new tests.
+- Doc-tests: `ValidatedDocTest` (3 new sections), `ResultDocTest` (ensure),
+  `CombinedDocTest` (per-item SKU validation via composed door).
+
+---
+
+## ADR-7 (2026-08-06): `Retry.Policy` hardening — `maxDelay`, `jitter`, `delayBefore`
+
+### Context
+
+Two production footguns: uncapped exponential backoff (attempt 10 of a 1-second
+doubling policy sleeps 8.5 minutes) and synchronized retries (a fleet of clients
+retrying in lockstep re-hammers a recovering service in waves). Both fixes are
+standard practice (AWS architecture guidance, resilience4j). The tension: the
+testing rule requires concurrency determinism, and jitter is randomness.
+
+### Decision
+
+`Policy` gains two components — `maxDelay` (cap applied after backoff) and
+`jitter` (fraction in `[0,1)`; each sleep scaled by a uniform factor in
+`[1-jitter, 1+jitter]` via `ThreadLocalRandom`) — with a three-arg convenience
+constructor defaulting to uncapped/zero, and `withMaxDelay`/`withJitter` wither
+methods. Determinism is preserved by construction: jitter defaults to `0`, and
+the new **`Policy.delayBefore(attempt)`** exposes the planned schedule as a pure
+function (jitter applies only at sleep time in `Retry.run`), so retry timing is
+assertable in tests without sleeping. This is the only randomness in the library
+and it is opt-in, applied at the last possible moment.
+
+### Alternatives considered
+
+- **Full-jitter (random in `[0, delay]`)**: rejected as default semantics —
+  equal-jitter around the planned delay keeps `delayBefore` an honest center of
+  the actual sleep; revisit if users ask.
+- **Injectable sleeper/clock for testability**: rejected — `delayBefore` gives
+  deterministic assertions without growing the API a seam that exists only for
+  tests.
+
+### Files to change
+
+- `Retry.java` — `Policy` components, withers, `delayBefore`, jittered sleep.
+- `RetryTest.java` — schedule/cap/jitter-validation tests.
+- `RetryDocTest.java` — "Cap the backoff, spread the herd" section.

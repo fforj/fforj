@@ -65,6 +65,46 @@ public sealed interface Validated<E, T> {
     }
 
     /**
+     * Validate every element of a list with one function, accumulating every failure —
+     * the accumulative "traverse". {@link Valid} of the parsed elements (in input
+     * order) only if every element passed; otherwise {@link Invalid} carrying the
+     * errors of <em>every</em> failed element, in input order.
+     *
+     * <p>An empty list is trivially {@code Valid} of an empty list. When emptiness is
+     * itself a failure, pair with {@code NonEmptyList.fromList} — or use the
+     * {@link #traverse(NonEmptyList, Function) NonEmptyList overload}, which carries
+     * non-emptiness through: non-empty in, non-empty out.
+     */
+    static <E, T, R> Validated<E, List<R>> traverse(
+            List<? extends T> items,
+            Function<? super T, ? extends Validated<E, R>> parse
+    ) {
+        Objects.requireNonNull(items, "items must not be null");
+        Objects.requireNonNull(parse, "parse function must not be null");
+        var values = new ArrayList<R>(items.size());
+        var errors = new ArrayList<E>();
+        for (var item : items) {
+            switch (parse.apply(item)) {
+                case Valid<E, R> v -> values.add(v.value());
+                case Invalid<E, R> i -> errors.addAll(i.errors().toList());
+            }
+        }
+        return errors.isEmpty()
+                ? new Valid<>(List.copyOf(values))
+                : new Invalid<>(toNonEmpty(errors));
+    }
+
+    /** {@link #traverse(List, Function) traverse}, preserving non-emptiness. */
+    static <E, T, R> Validated<E, NonEmptyList<R>> traverse(
+            NonEmptyList<T> items,
+            Function<? super T, ? extends Validated<E, R>> parse
+    ) {
+        Objects.requireNonNull(items, "items must not be null");
+        return traverse(items.toList(), parse).map(parsed ->
+                new NonEmptyList<>(parsed.getFirst(), parsed.subList(1, parsed.size())));
+    }
+
+    /**
      * A value bound inside an {@link #accumulate(Function) accumulate} block, not yet
      * unwrapped.
      *
@@ -102,6 +142,29 @@ public sealed interface Validated<E, T> {
         /** Bind an {@link Optional}: empty accumulates {@code ifEmpty.get()}. */
         default <T> Bound<T> on(Optional<? extends T> maybe, Supplier<? extends E> ifEmpty) {
             return on(fromResult(Result.fromOptional(maybe, ifEmpty)));
+        }
+
+        /**
+         * Bind a validation of every element of a list ({@link #on(Validated) on} of a
+         * {@link Validated#traverse(List, Function) traverse}): every failing element
+         * contributes its errors, and the {@link Bound} yields the fully-parsed list.
+         */
+        default <T, R> Bound<List<R>> onEach(
+                List<? extends T> items,
+                Function<? super T, ? extends Validated<E, R>> parse) {
+            return on(traverse(items, parse));
+        }
+
+        /**
+         * Check a condition with no value to bind — a guard, a limit, a cross-field
+         * rule. {@code false} records the error and the block <em>keeps running</em>,
+         * like every other binding; {@code true} records nothing.
+         */
+        default void ensure(boolean condition, Supplier<? extends E> error) {
+            Objects.requireNonNull(error, "ensure error supplier must not be null");
+            if (!condition) {
+                on(Validated.<E, Void>invalid(error.get()));
+            }
         }
     }
 
@@ -217,6 +280,19 @@ public sealed interface Validated<E, T> {
         return switch (this) {
             case Valid<E, T> v -> new Valid<>(f.apply(v.value()));
             case Invalid<E, T> i -> new Invalid<>(i.errors());
+        };
+    }
+
+    /**
+     * Transform every error in the batch; preserve the valid value. The accumulating
+     * counterpart of {@code Result.mapErr} — typically used at the boundary to
+     * translate domain errors into API- or user-facing shapes without losing any of
+     * the batch.
+     */
+    default <F> Validated<F, T> mapErr(Function<? super E, ? extends F> f) {
+        return switch (this) {
+            case Valid<E, T> v -> new Valid<>(v.value());
+            case Invalid<E, T> i -> new Invalid<>(i.errors().map(f));
         };
     }
 

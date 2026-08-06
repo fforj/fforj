@@ -129,6 +129,113 @@ class ValidatedTest {
                 : Validated.invalid(new Failure.NotPositive(age));
     }
 
+    private static Validated<Failure, Integer> parsedPositive(String s) {
+        try {
+            return positiveAge(Integer.parseInt(s));
+        } catch (NumberFormatException e) {
+            return Validated.invalid(new Failure.NotANumber(s));
+        }
+    }
+
+    @Test
+    void traverse_parses_every_element_in_order() {
+        assertEquals(Validated.<Failure, List<Integer>>valid(List.of(1, 2, 3)),
+                Validated.traverse(List.of("1", "2", "3"), ValidatedTest::parsedPositive));
+    }
+
+    @Test
+    void traverse_reports_every_failing_element_in_order() {
+        assertEquals(Validated.<Failure, List<Integer>>invalid(NonEmptyList.of(
+                        new Failure.NotANumber("x"),
+                        new Failure.NotPositive(-2),
+                        new Failure.NotANumber("y"))),
+                Validated.traverse(List.of("x", "1", "-2", "y"), ValidatedTest::parsedPositive));
+    }
+
+    @Test
+    void traverse_of_an_empty_list_is_trivially_valid() {
+        assertEquals(Validated.<Failure, List<Integer>>valid(List.of()),
+                Validated.traverse(List.<String>of(), ValidatedTest::parsedPositive));
+    }
+
+    @Test
+    void traverse_of_a_non_empty_list_preserves_non_emptiness() {
+        assertEquals(Validated.<Failure, NonEmptyList<Integer>>valid(NonEmptyList.of(1, 2)),
+                Validated.traverse(NonEmptyList.of("1", "2"), ValidatedTest::parsedPositive));
+
+        assertEquals(Validated.<Failure, NonEmptyList<Integer>>invalid(
+                        NonEmptyList.of(new Failure.NotANumber("x"))),
+                Validated.traverse(NonEmptyList.of("1", "x"), ValidatedTest::parsedPositive));
+    }
+
+    @Test
+    void onEach_accumulates_element_errors_alongside_other_bindings() {
+        Validated<Failure, Integer> v = Validated.accumulate(acc -> {
+            var name = acc.on(nonBlank(""));                                    // 1 error
+            var ages = acc.onEach(List.of("7", "x", "-2"), ValidatedTest::parsedPositive); // 2 errors
+            return name.value().length() + ages.value().size();
+        });
+
+        assertEquals(Validated.<Failure, Integer>invalid(NonEmptyList.of(
+                new Failure.Message("blank"),
+                new Failure.NotANumber("x"),
+                new Failure.NotPositive(-2))), v);
+    }
+
+    @Test
+    void onEach_yields_the_parsed_list_when_all_elements_pass() {
+        Validated<Failure, List<Integer>> v = Validated.accumulate(acc ->
+                acc.onEach(List.of("1", "2"), ValidatedTest::parsedPositive).value());
+
+        assertEquals(Validated.<Failure, List<Integer>>valid(List.of(1, 2)), v);
+    }
+
+    @Test
+    void ensure_records_the_error_and_keeps_the_block_running() {
+        var laterRan = new boolean[]{false};
+
+        Validated<Failure, String> v = Validated.accumulate(acc -> {
+            acc.ensure(false, () -> new Failure.Message("limit exceeded"));
+            laterRan[0] = true;
+            var name = acc.on(nonBlank(""));            // still binds, still contributes
+            return name.value();
+        });
+
+        assertEquals(Validated.<Failure, String>invalid(NonEmptyList.of(
+                new Failure.Message("limit exceeded"),
+                new Failure.Message("blank"))), v);
+        assertTrue(laterRan[0], "a failed ensure must not abort the accumulate block");
+    }
+
+    @Test
+    void ensure_with_a_true_condition_records_nothing() {
+        var supplierCalls = new int[]{0};
+
+        Validated<Failure, Integer> v = Validated.accumulate(acc -> {
+            acc.ensure(true, () -> {
+                supplierCalls[0]++;
+                return new Failure.Message("unused");
+            });
+            return 42;
+        });
+
+        assertEquals(Validated.<Failure, Integer>valid(42), v);
+        assertEquals(0, supplierCalls[0], "error supplier must not run when the condition holds");
+    }
+
+    @Test
+    void mapErr_transforms_every_error_and_preserves_valid() {
+        var mapped = Validated.<Failure, Integer>invalid(NonEmptyList.of(
+                        new Failure.NotPositive(-3), new Failure.Message("blank")))
+                .mapErr(Failure::message);
+
+        assertEquals(Validated.<String, Integer>invalid(NonEmptyList.of(
+                "not positive: -3", "blank")), mapped);
+
+        assertEquals(Validated.<String, Integer>valid(7),
+                Validated.<Failure, Integer>valid(7).mapErr(Failure::message));
+    }
+
     @Test
     void accumulate_returns_valid_when_every_binding_succeeds() {
         Validated<Failure, Form> form = Validated.accumulate(acc -> {

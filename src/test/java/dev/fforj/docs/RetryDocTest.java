@@ -65,6 +65,26 @@ class RetryDocTest {
         assertEquals(Result.err(ApiError.InvalidApiKey), r);
     }
 
+    /// ## Cap the backoff, spread the herd
+    ///
+    /// Uncapped exponential backoff gets silly fast — attempt 10 of a 1-second
+    /// doubling policy sleeps eight and a half minutes. `withMaxDelay` bounds every
+    /// delay, and `withJitter` scales each sleep by a random factor so a thousand
+    /// clients retrying in lockstep don't hammer the service in waves. The plan
+    /// itself stays inspectable: `delayBefore` is pure (jitter applies only at sleep
+    /// time), so you can assert your policy's timing without sleeping through it.
+    @Test
+    void the_delay_schedule_is_inspectable_without_sleeping() {
+        var policy = Retry.Policy.exponential(6, Duration.ofMillis(100))
+                .withMaxDelay(Duration.ofMillis(400))
+                .withJitter(0.2);                  // ±20% at sleep time, not in the plan
+
+        assertEquals(Duration.ofMillis(100), policy.delayBefore(2));
+        assertEquals(Duration.ofMillis(200), policy.delayBefore(3));
+        assertEquals(Duration.ofMillis(400), policy.delayBefore(4));   // capped
+        assertEquals(Duration.ofMillis(400), policy.delayBefore(5));   // stays capped
+    }
+
     /// ## Exhaustion returns the last error
     ///
     /// When every attempt fails, you get the most recent `Err` back — a value you

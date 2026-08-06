@@ -122,6 +122,22 @@ class ResultDocTest {
         assertEquals(Result.ok(60), total);
     }
 
+    /// ## Guards without values: `ensure`
+    ///
+    /// Not every rule produces a value — some just have to hold. `bind.ensure` reads
+    /// like an assertion but fails like everything else here: as a typed `Err` that
+    /// short-circuits the block.
+    @Test
+    void a_failed_guard_short_circuits_like_any_err() {
+        Result<String, Integer> withdrawal = Result.binding(bind -> {
+            int balance = bind.on(Result.<String, Integer>ok(70));
+            bind.ensure(balance >= 100, () -> "insufficient funds: " + balance);
+            return balance - 100;                  // never reached
+        });
+
+        assertEquals(Result.err("insufficient funds: 70"), withdrawal);
+    }
+
     /// ## Bridge to and from Optional
     ///
     /// `Optional` models absence; `Result` models failure with a reason. The bridges

@@ -157,5 +157,41 @@ class RetryTest {
                 () -> new Retry.Policy(3, Duration.ofMillis(-1), 1.0));
         assertThrows(IllegalArgumentException.class,
                 () -> new Retry.Policy(3, Duration.ZERO, 0.5));
+        assertThrows(IllegalArgumentException.class,
+                () -> Retry.Policy.fixed(3, Duration.ZERO).withJitter(1.0));
+        assertThrows(IllegalArgumentException.class,
+                () -> Retry.Policy.fixed(3, Duration.ZERO).withJitter(-0.1));
+        assertThrows(IllegalArgumentException.class,
+                () -> Retry.Policy.fixed(3, Duration.ZERO).withMaxDelay(Duration.ofMillis(-1)));
+    }
+
+    @Test
+    void delayBefore_reports_the_backoff_schedule_capped_at_maxDelay() {
+        var policy = Retry.Policy.exponential(6, Duration.ofMillis(100))
+                .withMaxDelay(Duration.ofMillis(400));
+
+        assertEquals(Duration.ofMillis(100), policy.delayBefore(2));
+        assertEquals(Duration.ofMillis(200), policy.delayBefore(3));
+        assertEquals(Duration.ofMillis(400), policy.delayBefore(4));
+        assertEquals(Duration.ofMillis(400), policy.delayBefore(5)); // stays capped
+        assertThrows(IllegalArgumentException.class, () -> policy.delayBefore(1));
+    }
+
+    @Test
+    void delayBefore_is_uncapped_and_jitter_free_by_default() {
+        var policy = Retry.Policy.exponential(10, Duration.ofMillis(1));
+
+        assertEquals(Duration.ofMillis(256), policy.delayBefore(10));
+        assertEquals(0.0, policy.jitter());
+    }
+
+    @Test
+    void a_jittered_policy_still_completes_its_retries() throws InterruptedException {
+        var policy = Retry.Policy.fixed(3, Duration.ofMillis(1)).withJitter(0.5);
+
+        Result<Err, String> r = Retry.run(policy, e -> true, attempt ->
+                attempt < 3 ? Result.err(Err.Transient) : Result.ok("done"));
+
+        assertEquals(Result.<Err, String>ok("done"), r);
     }
 }

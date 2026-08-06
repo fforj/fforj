@@ -5,6 +5,7 @@ import dev.fforj.Result;
 import dev.fforj.Validated;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -104,6 +105,80 @@ class ValidatedDocTest {
                         "country not recognized",
                         "currency is required")),
                 v);
+    }
+
+    // site:include
+    static Validated<String, Integer> quantity(String raw) {
+        int n;
+        try {
+            n = Integer.parseInt(raw);
+        } catch (NumberFormatException e) {
+            return Validated.invalid("not a number: " + raw);
+        }
+        return n > 0
+                ? Validated.valid(n)
+                : Validated.invalid("quantity must be positive, was " + n);
+    }
+
+    /// ## Whole collections: `onEach`
+    ///
+    /// Accumulation earns its keep most when the input is a *collection* — reject a
+    /// CSV import row by row and your users will resubmit all day. `acc.onEach` binds
+    /// a validation of every element: each failing element contributes its error, and
+    /// the bound value is the fully-parsed list. (Outside the DSL, the same operation
+    /// is `Validated.traverse` — with an overload that takes a `NonEmptyList` and
+    /// gives one back.)
+    @Test
+    void validate_every_element_and_report_every_bad_one() {
+        Validated<String, List<Integer>> quantities = Validated.accumulate(acc ->
+                acc.onEach(List.of("3", "-1", "0", "12"), ValidatedDocTest::quantity).value());
+
+        assertEquals(
+                Validated.invalid(NonEmptyList.of(
+                        "quantity must be positive, was -1",
+                        "quantity must be positive, was 0")),
+                quantities);
+    }
+
+    /// ## Rules without values: `ensure`
+    ///
+    /// Some validations have no value to bind — a limit, a cross-field rule, a
+    /// permission. `acc.ensure` reads like an assertion but accumulates like
+    /// everything else: a false condition records the error and the block keeps
+    /// running, so later checks still contribute theirs.
+    @Test
+    void guard_conditions_accumulate_like_any_other_failure() {
+        record Transfer(int amount, String memo) {}
+        var transfer = new Transfer(15_000, "");
+
+        Validated<String, Transfer> checked = Validated.accumulate(acc -> {
+            acc.ensure(transfer.amount() <= 10_000, () -> "amount exceeds the transfer limit");
+            acc.ensure(!transfer.memo().isBlank(), () -> "a memo is required");
+            return transfer;
+        });
+
+        assertEquals(
+                Validated.invalid(NonEmptyList.of(
+                        "amount exceeds the transfer limit",
+                        "a memo is required")),
+                checked);
+    }
+
+    /// ## Translate the whole batch: `mapErr`
+    ///
+    /// Domain errors rarely leave the system as-is. `mapErr` transforms every error
+    /// in the batch at once — the accumulating counterpart of `Result.mapErr` — so
+    /// the boundary can speak API while the core keeps speaking domain:
+    @Test
+    void the_error_batch_translates_without_losing_anything() {
+        var form = nonBlank("name", "").zip(nonBlank("email", " "), (n, e) -> n + e)
+                .mapErr(problem -> "REG-400: " + problem);
+
+        assertEquals(
+                Validated.invalid(NonEmptyList.of(
+                        "REG-400: name must not be blank",
+                        "REG-400: email must not be blank")),
+                form);
     }
 
     /// ## Back to Result when you're done

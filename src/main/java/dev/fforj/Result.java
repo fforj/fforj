@@ -4,6 +4,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.function.BiFunction;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -175,6 +176,19 @@ public sealed interface Result<E, T> {
         default <T> T on(Optional<? extends T> maybe, Supplier<? extends E> ifEmpty) {
             return on(fromOptional(maybe, ifEmpty));
         }
+
+        /**
+         * Assert a condition with no value to bind — a guard, a permission check, an
+         * invariant. {@code false} short-circuits the enclosing block with the
+         * supplied error, exactly like binding an {@code Err}; {@code true} is a
+         * no-op.
+         */
+        default void ensure(boolean condition, Supplier<? extends E> error) {
+            Objects.requireNonNull(error, "ensure error supplier must not be null");
+            if (!condition) {
+                this.<Void>on(Result.err(error.get()));
+            }
+        }
     }
 
     /**
@@ -315,6 +329,30 @@ public sealed interface Result<E, T> {
             case Ok<E, T> ok -> new Ok<>(ok.value());
             case Err<E, T> err -> new Err<>(f.apply(err.error()));
         };
+    }
+
+    /**
+     * Observe the success value — logging, metrics — and pass the result through
+     * unchanged. The observer runs only on {@link Ok}; it cannot alter the result.
+     */
+    default Result<E, T> tap(Consumer<? super T> observer) {
+        Objects.requireNonNull(observer, "tap observer must not be null");
+        if (this instanceof Ok<E, T> ok) {
+            observer.accept(ok.value());
+        }
+        return this;
+    }
+
+    /**
+     * Observe the error — logging, metrics — and pass the result through unchanged.
+     * The observer runs only on {@link Err}; it cannot alter the result.
+     */
+    default Result<E, T> tapErr(Consumer<? super E> observer) {
+        Objects.requireNonNull(observer, "tapErr observer must not be null");
+        if (this instanceof Err<E, T> err) {
+            observer.accept(err.error());
+        }
+        return this;
     }
 
     /** Sequential composition: chain another operation that itself may fail. */

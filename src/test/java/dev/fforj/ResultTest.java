@@ -252,6 +252,49 @@ class ResultTest {
     }
 
     @Test
+    void binding_ensure_short_circuits_on_a_false_condition() {
+        var afterGuard = new boolean[]{false};
+
+        Result<Failure, Integer> r = Result.binding(bind -> {
+            int balance = bind.on(positive("70"));
+            bind.ensure(balance >= 100, () -> new Failure.Message("insufficient funds: " + balance));
+            afterGuard[0] = true;                 // must never run
+            return balance - 100;
+        });
+
+        assertEquals(Result.<Failure, Integer>err(new Failure.Message("insufficient funds: 70")), r);
+        assertFalse(afterGuard[0], "code after a failed ensure must not run");
+    }
+
+    @Test
+    void binding_ensure_with_a_true_condition_is_a_no_op() {
+        var supplierCalls = new int[]{0};
+
+        Result<Failure, Integer> r = Result.binding(bind -> {
+            int balance = bind.on(positive("300"));
+            bind.ensure(balance >= 100, () -> {
+                supplierCalls[0]++;
+                return new Failure.Message("unused");
+            });
+            return balance - 100;
+        });
+
+        assertEquals(Result.<Failure, Integer>ok(200), r);
+        assertEquals(0, supplierCalls[0], "error supplier must not run when the condition holds");
+    }
+
+    @Test
+    void tap_and_tapErr_observe_their_own_case_and_change_nothing() {
+        var seen = new ArrayList<String>();
+        Result<Failure, Integer> ok = Result.ok(1);
+        Result<Failure, Integer> err = Result.err(new Failure.Message("boom"));
+
+        assertEquals(ok, ok.tap(v -> seen.add("ok:" + v)).tapErr(e -> seen.add("never")));
+        assertEquals(err, err.tap(v -> seen.add("never")).tapErr(e -> seen.add("err:" + e.message())));
+        assertEquals(List.of("ok:1", "err:boom"), seen);
+    }
+
+    @Test
     void mapErr_transforms_the_error_branch_only() {
         var err = Result.<Failure, Integer>err(new Failure.NotPositive(-1))
                 .mapErr(Failure::message);
