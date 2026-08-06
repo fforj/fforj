@@ -51,7 +51,8 @@ class CombinedDocTest {
         record NoItems() implements OrderError {}
         record BadSku(String raw) implements OrderError {}
         record TooManyItems(int count) implements OrderError {}
-        record UnknownCountry(String raw) implements OrderError {}
+        record BadCountry(String raw) implements OrderError {}
+        record UnshippableCountry(Country country) implements OrderError {}
         record OutOfStock(Sku sku) implements OrderError {}
         record GatewayTimeout() implements OrderError {}          // transient, worth retrying
         record PaymentFailed(String reason) implements OrderError {} // terminal, never retry
@@ -78,22 +79,20 @@ class CombinedDocTest {
 
     // site:include
     record Country(String code) {
-        static final Set<String> SHIPS_TO = Set.of("RO", "NL", "DE");
-
         Country {
-            if (!shipsTo(code)) {
-                throw new IllegalArgumentException("no shipping to: " + code);
+            if (!wellFormed(code)) {
+                throw new IllegalArgumentException("not a country code: " + code);
             }
         }
 
         static Validated<OrderError, Country> parse(String raw) {
-            return shipsTo(raw)
+            return wellFormed(raw)
                     ? Validated.valid(new Country(raw))
-                    : Validated.invalid(new OrderError.UnknownCountry(raw));
+                    : Validated.invalid(new OrderError.BadCountry(raw));
         }
 
-        private static boolean shipsTo(String code) {
-            return SHIPS_TO.contains(code);
+        private static boolean wellFormed(String code) {
+            return code.length() == 2 && code.chars().allMatch(Character::isUpperCase);
         }
     }
 
@@ -119,16 +118,19 @@ class CombinedDocTest {
     // site:include
     record Order(Email email, NonEmptyList<Sku> items, Country country) {}
 
-    /// Note what `Order` rules out by shape alone: a malformed email, a country we
-    /// don't ship to, a malformed SKU, and, because `items` is a `NonEmptyList`, an
+    /// Note what `Order` rules out by shape alone: a malformed email, a malformed
+    /// country code, a malformed SKU, and, because `items` is a `NonEmptyList`, an
     /// order with nothing in it. Downstream code never re-checks any of this; the
-    /// proof lives in the types. The wall holds even against code that skips the
-    /// door:
+    /// proof lives in the types. One rule is deliberately missing from that list,
+    /// whether we *ship* to a country. Keep reading. The wall holds even against
+    /// code that skips the door:
     @Test
     void the_wall_rejects_what_the_door_would() {
         assertThrows(IllegalArgumentException.class, () -> new Email("not-an-email"));
-        assertThrows(IllegalArgumentException.class, () -> new Country("XX"));
+        assertThrows(IllegalArgumentException.class, () -> new Country("Romania"));
         assertThrows(IllegalArgumentException.class, () -> new Sku("junk"));
+        // "XX" is a well-formed code. Whether we ship there is state, not shape:
+        assertEquals("XX", new Country("XX").code());
     }
 
     /// ## The boundary: accumulate everything
@@ -143,24 +145,51 @@ class CombinedDocTest {
                 .fold(Validated::invalid, skus -> Validated.traverse(skus, Sku::parse));
     }
 
+    /// ## Rules that live in data: ports
+    ///
+    /// One rule can't be a type invariant no matter how much we'd like it to be:
+    /// which countries we ship to. That list lives in a database and changes when
+    /// the business does. A type invariant must be timeless; a `Country` parsed
+    /// yesterday cannot become retroactively malformed because operations dropped a
+    /// row tonight. So `Country` proves *shape*, and shippability is a question we
+    /// ask, not a property we prove.
+    ///
+    /// The question goes through a *port*: a one-method interface the domain owns.
+    /// Production adapts a database query behind it; tests hand in a lambda. This is
+    /// hexagonal architecture in one sentence, the domain never imports the database
+    /// and dependencies point inward, with a seam small enough to be a
+    /// `@FunctionalInterface`:
+    // site:include
+    @FunctionalInterface
+    interface ShippingPolicy {
+        boolean shipsTo(Country country);
+    }
+
+    // site:include
+    static final ShippingPolicy SHIPS_EU =        // in production: a repository adapter
+            country -> Set.of("RO", "NL", "DE").contains(country.code());
+
     /// Field validations are independent, so a failure in one must not hide a failure
-    /// in another. `accumulate` binds the three doors, and then `ensure` joins the
-    /// one rule that fits no type: an order-size limit is *policy*, not shape, so it
-    /// doesn't belong in a wall. A false condition records its error and the block
-    /// keeps running, like every other binding. The final line assembles the domain
-    /// from already-proven parts:
+    /// in another. `accumulate` binds the doors, `ensure` joins the valueless rules
+    /// (an order-size limit is *policy*, not shape), and the shipping check shows
+    /// how a *dependent* validation fits: it needs the parsed `Country`, so its
+    /// unwrap becomes a deliberate gate. Independent bindings come first and keep
+    /// accumulating; the gate sits last, and if the country is malformed the policy
+    /// question is unaskable anyway:
     // site:include
     static final int MAX_ITEMS = 10;
 
     // site:include
-    static Validated<OrderError, Order> parse(RawOrder raw) {
+    static Validated<OrderError, Order> parse(RawOrder raw, ShippingPolicy shipping) {
         return Validated.accumulate(acc -> {
             var email = acc.on(Email.parse(raw.email()));
             var items = acc.on(parseItems(raw.skus()));
-            var country = acc.on(Country.parse(raw.country()));
             acc.ensure(raw.skus().size() <= MAX_ITEMS,
                     () -> new OrderError.TooManyItems(raw.skus().size()));
-            return new Order(email.value(), items.value(), country.value());
+            Country country = acc.on(Country.parse(raw.country())).value();  // the gate
+            acc.ensure(shipping.shipsTo(country),
+                    () -> new OrderError.UnshippableCountry(country));
+            return new Order(email.value(), items.value(), country);
         });
     }
 
@@ -172,8 +201,19 @@ class CombinedDocTest {
                 Validated.invalid(NonEmptyList.of(
                         new OrderError.BadEmail("not-an-email"),
                         new OrderError.NoItems(),
-                        new OrderError.UnknownCountry("XX"))),
-                parse(raw));
+                        new OrderError.UnshippableCountry(new Country("XX")))),
+                parse(raw, SHIPS_EU));
+    }
+
+    /// The gate in action: a malformed country reports its shape error, and the
+    /// policy check simply never runs, because there is no `Country` to ask about:
+    @Test
+    void a_malformed_country_gates_the_policy_check() {
+        var raw = new RawOrder("ada@lovelace.dev", List.of("SKU-1"), "Romania");
+
+        assertEquals(
+                Validated.invalid(NonEmptyList.of(new OrderError.BadCountry("Romania"))),
+                parse(raw, SHIPS_EU));
     }
 
     /// A failed guard accumulates with everything else. The oversized order still
@@ -187,7 +227,7 @@ class CombinedDocTest {
                 Validated.invalid(NonEmptyList.of(
                         new OrderError.BadEmail("not-an-email"),
                         new OrderError.TooManyItems(11))),
-                parse(raw));
+                parse(raw, SHIPS_EU));
     }
 
     /// Every malformed item reports individually, alongside the other fields'
@@ -201,14 +241,14 @@ class CombinedDocTest {
                         new OrderError.BadEmail("not-an-email"),
                         new OrderError.BadSku("junk"),
                         new OrderError.BadSku("bogus"))),
-                parse(raw));
+                parse(raw, SHIPS_EU));
     }
 
     /// Past the boundary, the guarantees hold by construction: every field is
     /// already a domain type, and no later code path can un-prove them:
     @Test
     void a_parsed_order_carries_its_invariants() {
-        var order = parse(new RawOrder("ada@lovelace.dev", List.of("SKU-1", "SKU-2"), "RO"));
+        var order = parse(new RawOrder("ada@lovelace.dev", List.of("SKU-1", "SKU-2"), "RO"), SHIPS_EU);
 
         assertEquals(Validated.valid(new Order(
                 new Email("ada@lovelace.dev"),
@@ -222,12 +262,23 @@ class CombinedDocTest {
     /// order that failed the stock check, and no point charging for it either. That's
     /// `Result` territory. The stock check returns a `Result`; the payment gateway is
     /// the other kind of boundary, the kind that *throws*, so `attempt` will wrap it
-    /// into the same typed world. Notice both speak in domain types: `OutOfStock` carries a
-    /// `Sku`, the gateway takes an `Email`.
+    /// into the same typed world. The warehouse is a port again, the same move as
+    /// `ShippingPolicy`, and everything speaks in domain types: `Inventory` is asked
+    /// about a `Sku`, `OutOfStock` carries one, and the gateway takes an `Email`.
     // site:include
-    static Result<OrderError, Order> checkStock(Order order, Set<String> inStock) {
+    @FunctionalInterface
+    interface Inventory {
+        boolean has(Sku sku);
+    }
+
+    // site:include
+    static final Inventory WAREHOUSE =            // in production: the inventory service
+            sku -> Set.of("SKU-1").contains(sku.code());
+
+    // site:include
+    static Result<OrderError, Order> checkStock(Order order, Inventory inventory) {
         return order.items().stream()
-                .filter(sku -> !inStock.contains(sku.code()))
+                .filter(sku -> !inventory.has(sku))
                 .findFirst()
                 .<Result<OrderError, Order>>map(gone -> Result.err(new OrderError.OutOfStock(gone)))
                 .orElse(Result.ok(order));
@@ -250,10 +301,10 @@ class CombinedDocTest {
     /// (like "is this worth retrying?") a matter of types instead of message-parsing:
     // site:include
     static Result<NonEmptyList<OrderError>, String> place(
-            RawOrder raw, Set<String> inStock, Gateway gateway) {
+            RawOrder raw, Inventory inventory, ShippingPolicy shipping, Gateway gateway) {
         return Result.binding(bind -> {
-            Order order = bind.on(parse(raw).toResult());                  // all boundary errors at once
-            bind.on(checkStock(order, inStock).mapErr(NonEmptyList::of));  // then fail fast
+            Order order = bind.on(parse(raw, shipping).toResult());         // all boundary errors at once
+            bind.on(checkStock(order, inventory).mapErr(NonEmptyList::of)); // then fail fast
             int cents = order.items().size() * 700;
             return bind.on(Result.attempt(
                     () -> gateway.charge(order.email(), cents),
@@ -270,7 +321,7 @@ class CombinedDocTest {
         var raw = new RawOrder("ada@lovelace.dev", List.of("SKU-1"), "RO");
 
         Result<NonEmptyList<OrderError>, String> placed =
-                place(raw, Set.of("SKU-1"), (email, cents) -> "receipt-7391/" + cents);
+                place(raw, WAREHOUSE, SHIPS_EU, (email, cents) -> "receipt-7391/" + cents);
 
         assertEquals(Result.ok("receipt-7391/700"), placed);
     }
@@ -282,7 +333,7 @@ class CombinedDocTest {
         var charged = new boolean[]{false};
         var raw = new RawOrder("not-an-email", List.of(), "XX");
 
-        var placed = place(raw, Set.of("SKU-1"), (email, cents) -> {
+        var placed = place(raw, WAREHOUSE, SHIPS_EU, (email, cents) -> {
             charged[0] = true;
             return "receipt";
         });
@@ -290,7 +341,7 @@ class CombinedDocTest {
         assertEquals(Result.err(NonEmptyList.of(
                 new OrderError.BadEmail("not-an-email"),
                 new OrderError.NoItems(),
-                new OrderError.UnknownCountry("XX"))), placed);
+                new OrderError.UnshippableCountry(new Country("XX")))), placed);
         assertFalse(charged[0], "a rejected order must never reach the gateway");
     }
 
@@ -300,7 +351,7 @@ class CombinedDocTest {
     void core_failures_short_circuit_one_at_a_time() {
         var raw = new RawOrder("ada@lovelace.dev", List.of("SKU-1", "SKU-9"), "RO");
 
-        var placed = place(raw, Set.of("SKU-1"), (email, cents) -> {
+        var placed = place(raw, WAREHOUSE, SHIPS_EU, (email, cents) -> {
             throw new IOException("must not be reached");
         });
 
@@ -314,7 +365,7 @@ class CombinedDocTest {
     void a_throwing_gateway_becomes_a_typed_error() {
         var raw = new RawOrder("ada@lovelace.dev", List.of("SKU-1"), "RO");
 
-        var placed = place(raw, Set.of("SKU-1"), (email, cents) -> {
+        var placed = place(raw, WAREHOUSE, SHIPS_EU, (email, cents) -> {
             throw new IOException("card declined");
         });
 
@@ -326,7 +377,7 @@ class CombinedDocTest {
     void a_gateway_timeout_becomes_its_own_error_variant() {
         var raw = new RawOrder("ada@lovelace.dev", List.of("SKU-1"), "RO");
 
-        var placed = place(raw, Set.of("SKU-1"), (email, cents) -> {
+        var placed = place(raw, WAREHOUSE, SHIPS_EU, (email, cents) -> {
             throw new SocketTimeoutException("read timed out");
         });
 
@@ -341,7 +392,7 @@ class CombinedDocTest {
     @Test
     void the_edge_of_the_system_is_a_single_pattern_match() {
         var raw = new RawOrder("not-an-email", List.of(), "XX");
-        var placed = place(raw, Set.of("SKU-1"), (email, cents) -> "receipt");
+        var placed = place(raw, WAREHOUSE, SHIPS_EU, (email, cents) -> "receipt");
 
         String response = switch (placed) {
             case Result.Ok<NonEmptyList<OrderError>, String>(String receipt) ->
