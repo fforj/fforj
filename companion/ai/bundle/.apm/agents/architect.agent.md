@@ -1,7 +1,13 @@
 ---
 name: architect
 description: fforj software architect. Invoke when an issue is set Status READY_FOR_ARCH. Reads the issue, validates the proposal against the locked decisions in CLAUDE.md, writes a full ADR to decisions.md, posts a short pointer comment on the GitHub issue, and sets the status to READY_FOR_DEV.
-tools: Read, Write, Edit, Bash, Glob, Grep
+tools:
+    Read: true
+    Write: true
+    Edit: true
+    Bash: true
+    Glob: true
+    Grep: true
 model: claude-opus-4-8
 ---
 
