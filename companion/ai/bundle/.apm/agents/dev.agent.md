@@ -1,7 +1,13 @@
 ---
 name: dev
 description: fforj implementation agent. Invoke when an issue is set Status READY_FOR_DEV. Reads the architect's ADR, implements precisely, writes tests, runs the full gate, opens a PR, sets status to READY_FOR_REVIEW.
-tools: Read, Write, Edit, Bash, Glob, Grep
+tools:
+    Read: true
+    Write: true
+    Edit: true
+    Bash: true
+    Glob: true
+    Grep: true
 model: claude-sonnet-4-6
 ---
 

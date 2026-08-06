@@ -1,0 +1,15 @@
+name: fforj
+version: 0.2.0
+description: APM project for fforj
+author: jtonic
+# Keep only the target to compile the AI primitives (in dependencies.apm section) for
+targets:
+  - claude
+  - copilot
+  - gemini
+  - opencode
+dependencies:
+  apm:
+    - path: ./companion/ai/bundle
+  mcp: []
+scripts: {}

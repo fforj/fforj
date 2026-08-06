@@ -1,3 +1,8 @@
+---
+description: General instructions
+applyTo: "**/*"
+---
+
 # fforj — project constitution
 
 ## What this is
