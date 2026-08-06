@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Putting it together: an order, end to end · ﬀorj</title>
+<meta name="description" content="Result, Validated, and NonEmptyList meeting in one pipeline, raw input to response.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22 font-family=%22Georgia,serif%22 fill=%22%23C0341D%22>ﬀ</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <a class="wordmark" href="../../index.html"><span class="lig">ﬀ</span>orj</a>
+    <select id="vsel" aria-label="Documentation version"
+            data-prefix="next/" data-page="guides/order/index.html"><option>main</option></select>
+  </div>
+  <nav>
+    <a href="../../index.html#guides">Guides</a>
+    <a href="../../api/index.html">API</a>
+    <a href="https://github.com/fforj/fforj">GitHub</a>
+  </nav>
+</header>
+<div class="layout">
+<aside class="sidenav">
+<div class="eyebrow">GUIDES</div>
+<ul>
+<li><a href="../result/index.html">Result: errors as values</a></li>
+<li><a href="../validated/index.html">Validated: every error, at once</a></li>
+<li><a href="../nonemptylist/index.html">NonEmptyList: emptiness, unrepresentable</a></li>
+<li><a href="../retry/index.html">Retry: backoff without a framework</a></li>
+<li class="here"><a href="../order/index.html">Putting it together: an order, end to end</a></li>
+</ul>
+</aside>
+<main class="article">
+<h1>Putting it together: an order, end to end</h1>
+<p>The three types are designed to meet. The whole idea in one sentence: <strong>accumulate at the boundary, short-circuit in the core, and make illegal states unrepresentable in between.</strong> This page walks a single scenario, placing an order, from raw untrusted input to the final response.</p>
+<p>The domain first. <code>RawOrder</code> is what arrives over the wire: all strings, anything possible. <code>Order</code> is what the rest of the system works with, and none of its fields are strings: each is a domain type that follows <a href="https://lexi-lambda.github.io/blog/2019/11/05/parse-don-t-validate/">parse, don't validate</a>. Every type has a <em>wall</em>, a constructor that makes an illegal value impossible to construct. The fallible ones also have a <em>door</em>: a static <code>parse</code> returning <code>Validated</code>, so boundary failures can accumulate. Each rule is written once, as a small private predicate the wall and the door both consult. The tempting alternative, letting <code>parse</code> call the constructor and catch the wall's exception, runs routine validation on exception handling and can mislabel a genuine bug in the constructor as bad user input:</p>
+<pre class="code"><code><span class="c-kw">record</span> RawOrder(String email, List&lt;String&gt; skus, String country) {}</code></pre>
+<pre class="code"><code><span class="c-kw">sealed</span> <span class="c-kw">interface</span> OrderError {
+    <span class="c-kw">record</span> BadEmail(String raw) <span class="c-kw">implements</span> OrderError {}
+    <span class="c-kw">record</span> NoItems() <span class="c-kw">implements</span> OrderError {}
+    <span class="c-kw">record</span> BadSku(String raw) <span class="c-kw">implements</span> OrderError {}
+    <span class="c-kw">record</span> TooManyItems(<span class="c-kw">int</span> count) <span class="c-kw">implements</span> OrderError {}
+    <span class="c-kw">record</span> BadCountry(String raw) <span class="c-kw">implements</span> OrderError {}
+    <span class="c-kw">record</span> UnshippableCountry(Country country) <span class="c-kw">implements</span> OrderError {}
+    <span class="c-kw">record</span> OutOfStock(Sku sku) <span class="c-kw">implements</span> OrderError {}
+    <span class="c-kw">record</span> GatewayTimeout() <span class="c-kw">implements</span> OrderError {}          <span class="c-com">// transient, worth retrying</span>
+    <span class="c-kw">record</span> PaymentFailed(String reason) <span class="c-kw">implements</span> OrderError {} <span class="c-com">// terminal, never retry</span>
+}</code></pre>
+<pre class="code"><code><span class="c-kw">record</span> Email(String value) {
+    Email {                                     <span class="c-com">// the wall: an illegal Email cannot exist</span>
+        <span class="c-kw">if</span> (!isEmail(value)) {
+            <span class="c-kw">throw</span> <span class="c-kw">new</span> IllegalArgumentException(<span class="c-str">"not an email: "</span> + value);
+        }
+    }
+
+    <span class="c-kw">static</span> Validated&lt;OrderError, Email&gt; parse(String raw) {   <span class="c-com">// the door: typed errors</span>
+        <span class="c-kw">return</span> isEmail(raw)
+                ? Validated.valid(<span class="c-kw">new</span> Email(raw))
+                : Validated.invalid(<span class="c-kw">new</span> OrderError.BadEmail(raw));
+    }
+
+    <span class="c-kw">private</span> <span class="c-kw">static</span> <span class="c-kw">boolean</span> isEmail(String s) {  <span class="c-com">// the rule, written once</span>
+        <span class="c-kw">return</span> s.contains(<span class="c-str">"@"</span>);
+    }
+}</code></pre>
+<pre class="code"><code><span class="c-kw">record</span> Country(String code) {
+    Country {
+        <span class="c-kw">if</span> (!wellFormed(code)) {
+            <span class="c-kw">throw</span> <span class="c-kw">new</span> IllegalArgumentException(<span class="c-str">"not a country code: "</span> + code);
+        }
+    }
+
+    <span class="c-kw">static</span> Validated&lt;OrderError, Country&gt; parse(String raw) {
+        <span class="c-kw">return</span> wellFormed(raw)
+                ? Validated.valid(<span class="c-kw">new</span> Country(raw))
+                : Validated.invalid(<span class="c-kw">new</span> OrderError.BadCountry(raw));
+    }
+
+    <span class="c-kw">private</span> <span class="c-kw">static</span> <span class="c-kw">boolean</span> wellFormed(String code) {
+        <span class="c-kw">return</span> code.length() == 2 &amp;&amp; code.chars().allMatch(Character::isUpperCase);
+    }
+}</code></pre>
+<pre class="code"><code><span class="c-kw">record</span> Sku(String code) {
+    Sku {
+        <span class="c-kw">if</span> (!wellFormed(code)) {
+            <span class="c-kw">throw</span> <span class="c-kw">new</span> IllegalArgumentException(<span class="c-str">"malformed SKU: "</span> + code);
+        }
+    }
+
+    <span class="c-kw">static</span> Validated&lt;OrderError, Sku&gt; parse(String raw) {
+        <span class="c-kw">return</span> wellFormed(raw)
+                ? Validated.valid(<span class="c-kw">new</span> Sku(raw))
+                : Validated.invalid(<span class="c-kw">new</span> OrderError.BadSku(raw));
+    }
+
+    <span class="c-kw">private</span> <span class="c-kw">static</span> <span class="c-kw">boolean</span> wellFormed(String code) {
+        <span class="c-kw">return</span> code.startsWith(<span class="c-str">"SKU-"</span>);
+    }
+}</code></pre>
+<pre class="code"><code><span class="c-kw">record</span> Order(Email email, NonEmptyList&lt;Sku&gt; items, Country country) {}</code></pre>
+<p>Note what <code>Order</code> rules out by shape alone: a malformed email, a malformed country code, a malformed SKU, and, because <code>items</code> is a <code>NonEmptyList</code>, an order with nothing in it. Downstream code never re-checks any of this; the proof lives in the types. One rule is deliberately missing from that list, whether we <em>ship</em> to a country. Keep reading. The wall holds even against code that skips the door:</p>
+<pre class="code"><code>assertThrows(IllegalArgumentException.<span class="c-kw">class</span>, () -&gt; <span class="c-kw">new</span> Email(<span class="c-str">"not-an-email"</span>));
+assertThrows(IllegalArgumentException.<span class="c-kw">class</span>, () -&gt; <span class="c-kw">new</span> Country(<span class="c-str">"Romania"</span>));
+assertThrows(IllegalArgumentException.<span class="c-kw">class</span>, () -&gt; <span class="c-kw">new</span> Sku(<span class="c-str">"junk"</span>));
+<span class="c-com">// "XX" is a well-formed code. Whether we ship there is state, not shape:</span>
+assertEquals(<span class="c-str">"XX"</span>, <span class="c-kw">new</span> Country(<span class="c-str">"XX"</span>).code());</code></pre>
+<h2 id="the-boundary-accumulate-everything">The boundary: accumulate everything</h2>
+<p>The items door is <em>composed from smaller doors</em>: an empty list is one failure (there's nothing to validate item by item), otherwise <code>Validated.traverse</code> parses every element and reports every bad one. Non-empty in, non-empty out, so the result is already the <code>NonEmptyList&lt;Sku&gt;</code> the domain wants:</p>
+<pre class="code"><code><span class="c-kw">static</span> Validated&lt;OrderError, NonEmptyList&lt;Sku&gt;&gt; parseItems(List&lt;String&gt; raws) {
+    <span class="c-kw">return</span> Result.fromOptional(NonEmptyList.fromList(raws), OrderError.NoItems::<span class="c-kw">new</span>)
+            .fold(Validated::invalid, skus -&gt; Validated.traverse(skus, Sku::parse));
+}</code></pre>
+<h2 id="rules-that-live-in-data-ports">Rules that live in data: ports</h2>
+<p>One rule can't be a type invariant no matter how much we'd like it to be: which countries we ship to. That list lives in a database and changes when the business does. A type invariant must be timeless; a <code>Country</code> parsed yesterday cannot become retroactively malformed because operations dropped a row tonight. So <code>Country</code> proves <em>shape</em>, and shippability is a question we ask, not a property we prove.</p>
+<p>The question goes through a <em>port</em>: a one-method interface the domain owns. Production adapts a database query behind it; tests hand in a lambda. This is hexagonal architecture in one sentence, the domain never imports the database and dependencies point inward, with a seam small enough to be a <code>@FunctionalInterface</code>:</p>
+<pre class="code"><code><span class="c-ann">@FunctionalInterface</span>
+<span class="c-kw">interface</span> ShippingPolicy {
+    <span class="c-kw">boolean</span> shipsTo(Country country);
+}</code></pre>
+<pre class="code"><code><span class="c-kw">static</span> <span class="c-kw">final</span> ShippingPolicy SHIPS_EU =        <span class="c-com">// in production: a repository adapter</span>
+        country -&gt; Set.of(<span class="c-str">"RO"</span>, <span class="c-str">"NL"</span>, <span class="c-str">"DE"</span>).contains(country.code());</code></pre>
+<p>Field validations are independent, so a failure in one must not hide a failure in another. <code>accumulate</code> binds the doors, <code>ensure</code> joins the valueless rules (an order-size limit is <em>policy</em>, not shape), and the shipping check shows how a <em>dependent</em> validation fits: it needs the parsed <code>Country</code>, so its unwrap becomes a deliberate gate. Independent bindings come first and keep accumulating; the gate sits last, and if the country is malformed the policy question is unaskable anyway:</p>
+<pre class="code"><code><span class="c-kw">static</span> <span class="c-kw">final</span> <span class="c-kw">int</span> MAX_ITEMS = 10;</code></pre>
+<pre class="code"><code><span class="c-kw">static</span> Validated&lt;OrderError, Order&gt; parse(RawOrder raw, ShippingPolicy shipping) {
+    <span class="c-kw">return</span> Validated.accumulate(acc -&gt; {
+        <span class="c-kw">var</span> email = acc.on(Email.parse(raw.email()));
+        <span class="c-kw">var</span> items = acc.on(parseItems(raw.skus()));
+        acc.ensure(raw.skus().size() &lt;= MAX_ITEMS,
+                () -&gt; <span class="c-kw">new</span> OrderError.TooManyItems(raw.skus().size()));
+        Country country = acc.on(Country.parse(raw.country())).value();  <span class="c-com">// the gate</span>
+        acc.ensure(shipping.shipsTo(country),
+                () -&gt; <span class="c-kw">new</span> OrderError.UnshippableCountry(country));
+        <span class="c-kw">return</span> <span class="c-kw">new</span> Order(email.value(), items.value(), country);
+    });
+}</code></pre>
+<pre class="code"><code><span class="c-kw">var</span> raw = <span class="c-kw">new</span> RawOrder(<span class="c-str">"not-an-email"</span>, List.of(), <span class="c-str">"XX"</span>);
+
+assertEquals(
+        Validated.invalid(NonEmptyList.of(
+                <span class="c-kw">new</span> OrderError.BadEmail(<span class="c-str">"not-an-email"</span>),
+                <span class="c-kw">new</span> OrderError.NoItems(),
+                <span class="c-kw">new</span> OrderError.UnshippableCountry(<span class="c-kw">new</span> Country(<span class="c-str">"XX"</span>)))),
+        parse(raw, SHIPS_EU));</code></pre>
+<p>The gate in action: a malformed country reports its shape error, and the policy check simply never runs, because there is no <code>Country</code> to ask about:</p>
+<pre class="code"><code><span class="c-kw">var</span> raw = <span class="c-kw">new</span> RawOrder(<span class="c-str">"ada@lovelace.dev"</span>, List.of(<span class="c-str">"SKU-1"</span>), <span class="c-str">"Romania"</span>);
+
+assertEquals(
+        Validated.invalid(NonEmptyList.of(<span class="c-kw">new</span> OrderError.BadCountry(<span class="c-str">"Romania"</span>))),
+        parse(raw, SHIPS_EU));</code></pre>
+<p>A failed guard accumulates with everything else. The oversized order still gets its other problems reported in the same response:</p>
+<pre class="code"><code><span class="c-kw">var</span> elevenSkus = IntStream.rangeClosed(1, 11).mapToObj(i -&gt; <span class="c-str">"SKU-"</span> + i).toList();
+<span class="c-kw">var</span> raw = <span class="c-kw">new</span> RawOrder(<span class="c-str">"not-an-email"</span>, elevenSkus, <span class="c-str">"RO"</span>);
+
+assertEquals(
+        Validated.invalid(NonEmptyList.of(
+                <span class="c-kw">new</span> OrderError.BadEmail(<span class="c-str">"not-an-email"</span>),
+                <span class="c-kw">new</span> OrderError.TooManyItems(11))),
+        parse(raw, SHIPS_EU));</code></pre>
+<p>Every malformed item reports individually, alongside the other fields' problems. One response, the complete story:</p>
+<pre class="code"><code><span class="c-kw">var</span> raw = <span class="c-kw">new</span> RawOrder(<span class="c-str">"not-an-email"</span>, List.of(<span class="c-str">"SKU-1"</span>, <span class="c-str">"junk"</span>, <span class="c-str">"bogus"</span>), <span class="c-str">"RO"</span>);
+
+assertEquals(
+        Validated.invalid(NonEmptyList.of(
+                <span class="c-kw">new</span> OrderError.BadEmail(<span class="c-str">"not-an-email"</span>),
+                <span class="c-kw">new</span> OrderError.BadSku(<span class="c-str">"junk"</span>),
+                <span class="c-kw">new</span> OrderError.BadSku(<span class="c-str">"bogus"</span>))),
+        parse(raw, SHIPS_EU));</code></pre>
+<p>Past the boundary, the guarantees hold by construction: every field is already a domain type, and no later code path can un-prove them:</p>
+<pre class="code"><code><span class="c-kw">var</span> order = parse(<span class="c-kw">new</span> RawOrder(<span class="c-str">"ada@lovelace.dev"</span>, List.of(<span class="c-str">"SKU-1"</span>, <span class="c-str">"SKU-2"</span>), <span class="c-str">"RO"</span>), SHIPS_EU);
+
+assertEquals(Validated.valid(<span class="c-kw">new</span> Order(
+        <span class="c-kw">new</span> Email(<span class="c-str">"ada@lovelace.dev"</span>),
+        NonEmptyList.of(<span class="c-kw">new</span> Sku(<span class="c-str">"SKU-1"</span>), <span class="c-kw">new</span> Sku(<span class="c-str">"SKU-2"</span>)),
+        <span class="c-kw">new</span> Country(<span class="c-str">"RO"</span>))), order);</code></pre>
+<h2 id="the-core-short-circuit-dependent-steps">The core: short-circuit dependent steps</h2>
+<p>After parsing, the steps <em>depend</em> on each other. There's no point pricing an order that failed the stock check, and no point charging for it either. That's <code>Result</code> territory. The stock check returns a <code>Result</code>; the payment gateway is the other kind of boundary, the kind that <em>throws</em>, so <code>attempt</code> will wrap it into the same typed world. The warehouse is a port again, the same move as <code>ShippingPolicy</code>, and everything speaks in domain types: <code>Inventory</code> is asked about a <code>Sku</code>, <code>OutOfStock</code> carries one, and the gateway takes an <code>Email</code>.</p>
+<pre class="code"><code><span class="c-ann">@FunctionalInterface</span>
+<span class="c-kw">interface</span> Inventory {
+    <span class="c-kw">boolean</span> has(Sku sku);
+}</code></pre>
+<pre class="code"><code><span class="c-kw">static</span> <span class="c-kw">final</span> Inventory WAREHOUSE =            <span class="c-com">// in production: the inventory service</span>
+        sku -&gt; Set.of(<span class="c-str">"SKU-1"</span>).contains(sku.code());</code></pre>
+<pre class="code"><code><span class="c-kw">static</span> Result&lt;OrderError, Order&gt; checkStock(Order order, Inventory inventory) {
+    <span class="c-kw">return</span> order.items().stream()
+            .filter(sku -&gt; !inventory.has(sku))
+            .findFirst()
+            .&lt;Result&lt;OrderError, Order&gt;&gt;map(gone -&gt; Result.err(<span class="c-kw">new</span> OrderError.OutOfStock(gone)))
+            .orElse(Result.ok(order));
+}</code></pre>
+<pre class="code"><code><span class="c-ann">@FunctionalInterface</span>
+<span class="c-kw">interface</span> Gateway {
+    String charge(Email email, <span class="c-kw">int</span> cents) <span class="c-kw">throws</span> IOException;
+}</code></pre>
+<h2 id="the-bridge-one-error-channel-for-both-worlds">The bridge: one error channel for both worlds</h2>
+<p>Here is where it all meets. <code>toResult()</code> carries the boundary's error <em>batch</em> into the short-circuiting world, and each core step joins the same channel with <code>mapErr(NonEmptyList::of)</code>, because a single error is just a batch of one. <code>NonEmptyList</code> quietly unifies the whole pipeline's error type. Note the <code>attempt</code> mapper: it's a pattern match itself, because a timeout is not a decline. Classifying the throwable <em>here</em> is what keeps every later decision (like "is this worth retrying?") a matter of types instead of message-parsing:</p>
+<pre class="code"><code><span class="c-kw">static</span> Result&lt;NonEmptyList&lt;OrderError&gt;, String&gt; place(
+        RawOrder raw, Inventory inventory, ShippingPolicy shipping, Gateway gateway) {
+    <span class="c-kw">return</span> Result.binding(bind -&gt; {
+        Order order = bind.on(parse(raw, shipping).toResult());         <span class="c-com">// all boundary errors at once</span>
+        bind.on(checkStock(order, inventory).mapErr(NonEmptyList::of)); <span class="c-com">// then fail fast</span>
+        <span class="c-kw">int</span> cents = order.items().size() * 700;
+        <span class="c-kw">return</span> bind.on(Result.attempt(
+                () -&gt; gateway.charge(order.email(), cents),
+                t -&gt; <span class="c-kw">switch</span> (t) {
+                    <span class="c-kw">case</span> SocketTimeoutException ignored -&gt; <span class="c-kw">new</span> OrderError.GatewayTimeout();
+                    <span class="c-kw">default</span> -&gt; <span class="c-kw">new</span> OrderError.PaymentFailed(t.getMessage());
+                })
+                .mapErr(NonEmptyList::of));
+    });
+}</code></pre>
+<pre class="code"><code><span class="c-kw">var</span> raw = <span class="c-kw">new</span> RawOrder(<span class="c-str">"ada@lovelace.dev"</span>, List.of(<span class="c-str">"SKU-1"</span>), <span class="c-str">"RO"</span>);
+
+Result&lt;NonEmptyList&lt;OrderError&gt;, String&gt; placed =
+        place(raw, WAREHOUSE, SHIPS_EU, (email, cents) -&gt; <span class="c-str">"receipt-7391/"</span> + cents);
+
+assertEquals(Result.ok(<span class="c-str">"receipt-7391/700"</span>), placed);</code></pre>
+<p>Boundary failures arrive as the full batch, and the pipeline proves its laziness: nothing downstream runs, and the gateway is never touched:</p>
+<pre class="code"><code><span class="c-kw">var</span> charged = <span class="c-kw">new</span> <span class="c-kw">boolean</span>[]{false};
+<span class="c-kw">var</span> raw = <span class="c-kw">new</span> RawOrder(<span class="c-str">"not-an-email"</span>, List.of(), <span class="c-str">"XX"</span>);
+
+<span class="c-kw">var</span> placed = place(raw, WAREHOUSE, SHIPS_EU, (email, cents) -&gt; {
+    charged[0] = true;
+    <span class="c-kw">return</span> <span class="c-str">"receipt"</span>;
+});
+
+assertEquals(Result.err(NonEmptyList.of(
+        <span class="c-kw">new</span> OrderError.BadEmail(<span class="c-str">"not-an-email"</span>),
+        <span class="c-kw">new</span> OrderError.NoItems(),
+        <span class="c-kw">new</span> OrderError.UnshippableCountry(<span class="c-kw">new</span> Country(<span class="c-str">"XX"</span>)))), placed);
+assertFalse(charged[0], <span class="c-str">"a rejected order must never reach the gateway"</span>);</code></pre>
+<p>Core failures are singular. The first dependent step to fail ends the story, as a batch of one:</p>
+<pre class="code"><code><span class="c-kw">var</span> raw = <span class="c-kw">new</span> RawOrder(<span class="c-str">"ada@lovelace.dev"</span>, List.of(<span class="c-str">"SKU-1"</span>, <span class="c-str">"SKU-9"</span>), <span class="c-str">"RO"</span>);
+
+<span class="c-kw">var</span> placed = place(raw, WAREHOUSE, SHIPS_EU, (email, cents) -&gt; {
+    <span class="c-kw">throw</span> <span class="c-kw">new</span> IOException(<span class="c-str">"must not be reached"</span>);
+});
+
+assertEquals(Result.err(NonEmptyList.of(
+        <span class="c-kw">new</span> OrderError.OutOfStock(<span class="c-kw">new</span> Sku(<span class="c-str">"SKU-9"</span>)))), placed);</code></pre>
+<p>And a throwing gateway becomes a typed error like everything else, each kind of throwable landing in its own variant:</p>
+<pre class="code"><code><span class="c-kw">var</span> raw = <span class="c-kw">new</span> RawOrder(<span class="c-str">"ada@lovelace.dev"</span>, List.of(<span class="c-str">"SKU-1"</span>), <span class="c-str">"RO"</span>);
+
+<span class="c-kw">var</span> placed = place(raw, WAREHOUSE, SHIPS_EU, (email, cents) -&gt; {
+    <span class="c-kw">throw</span> <span class="c-kw">new</span> IOException(<span class="c-str">"card declined"</span>);
+});
+
+assertEquals(Result.err(NonEmptyList.of(
+        <span class="c-kw">new</span> OrderError.PaymentFailed(<span class="c-str">"card declined"</span>))), placed);</code></pre>
+<pre class="code"><code><span class="c-kw">var</span> raw = <span class="c-kw">new</span> RawOrder(<span class="c-str">"ada@lovelace.dev"</span>, List.of(<span class="c-str">"SKU-1"</span>), <span class="c-str">"RO"</span>);
+
+<span class="c-kw">var</span> placed = place(raw, WAREHOUSE, SHIPS_EU, (email, cents) -&gt; {
+    <span class="c-kw">throw</span> <span class="c-kw">new</span> SocketTimeoutException(<span class="c-str">"read timed out"</span>);
+});
+
+assertEquals(Result.err(NonEmptyList.of(<span class="c-kw">new</span> OrderError.GatewayTimeout())), placed);</code></pre>
+<h2 id="the-response-one-exhaustive-switch">The response: one exhaustive switch</h2>
+<p>The pipeline's result is a value, so the edge of the system is a single pattern match. The compiler guarantees both outcomes are handled, and the error branch has the <em>complete</em> story to tell the caller:</p>
+<pre class="code"><code><span class="c-kw">var</span> raw = <span class="c-kw">new</span> RawOrder(<span class="c-str">"not-an-email"</span>, List.of(), <span class="c-str">"XX"</span>);
+<span class="c-kw">var</span> placed = place(raw, WAREHOUSE, SHIPS_EU, (email, cents) -&gt; <span class="c-str">"receipt"</span>);
+
+String response = <span class="c-kw">switch</span> (placed) {
+    <span class="c-kw">case</span> Result.Ok&lt;NonEmptyList&lt;OrderError&gt;, String&gt;(String receipt) -&gt;
+            <span class="c-str">"201 Created: "</span> + receipt;
+    <span class="c-kw">case</span> Result.Err&lt;NonEmptyList&lt;OrderError&gt;, String&gt;(NonEmptyList&lt;OrderError&gt; errors) -&gt;
+            <span class="c-str">"422 Unprocessable: "</span> + errors.size() + <span class="c-str">" problems"</span>;
+};
+
+assertEquals(<span class="c-str">"422 Unprocessable: 3 problems"</span>, response);</code></pre>
+<h2 id="epilogue-when-the-gateway-is-flaky-add-retry">Epilogue: when the gateway is flaky, add Retry</h2>
+<p>One piece was missing from the tour: real gateways time out. <code>Retry</code> wraps any <code>Result</code>-returning step, handing the body the current attempt number. The retry predicate is where a stringly error type would hurt most: if telling transient from terminal meant parsing a message, the type would be missing a variant. It isn't, so the predicate is a pattern, and the whole retry policy reads off the ADT: <code>GatewayTimeout</code> retries, everything else is final. (With several transient variants, the predicate grows into an exhaustive <code>switch</code> table over the error type.)</p>
+<pre class="code"><code><span class="c-kw">var</span> policy = Retry.Policy.exponential(4, Duration.ZERO);
+
+Result&lt;OrderError, String&gt; charged = Retry.run(policy,
+        e -&gt; e <span class="c-kw">instanceof</span> OrderError.GatewayTimeout,
+        attempt -&gt; attempt &lt; 3
+                ? Result.err(<span class="c-kw">new</span> OrderError.GatewayTimeout())
+                : Result.ok(<span class="c-str">"receipt-7391 after "</span> + attempt + <span class="c-str">" tries"</span>));
+
+assertEquals(Result.ok(<span class="c-str">"receipt-7391 after 3 tries"</span>), charged);</code></pre>
+<p class="edit"><a href="https://github.com/fforj/fforj/blob/main/src/test/java/dev/fforj/docs/CombinedDocTest.java">This page is generated from a test file. Read or improve it on GitHub.</a></p>
+</main>
+</div>
+
+<footer class="foot">
+  <p><span class="lig rub">ﬀ</span>orj is MIT-licensed.
+  Every example on this site is a test in the
+  <a href="https://github.com/fforj/fforj">repository</a>;
+  the suite ran green before this page was built.</p>
+</footer>
+<script>
+(function () {
+  var sel = document.getElementById("vsel");
+  var prefix = sel.dataset.prefix, page = sel.dataset.page;
+  var path = location.pathname;
+  // Site root = current path minus this build's prefix and page path,
+  // tolerating servers that serve directories without "index.html".
+  var root = null;
+  var suffix = prefix + page;
+  if (path.endsWith(suffix)) {
+    root = path.slice(0, path.length - suffix.length);
+  } else if (suffix.endsWith("index.html")) {
+    var dir = suffix.slice(0, suffix.length - "index.html".length);
+    if (path.endsWith(dir)) root = path.slice(0, path.length - dir.length);
+  }
+  if (root === null) return;
+  fetch(root + "versions.json").then(function (r) { return r.json(); })
+    .then(function (v) {
+      sel.innerHTML = "";
+      v.entries.forEach(function (e) {
+        var o = document.createElement("option");
+        o.value = e.path;
+        o.textContent = e.label;
+        if (e.path === prefix) o.selected = true;
+        sel.appendChild(o);
+      });
+      sel.onchange = function () {
+        var target = root + sel.value + page;
+        // Same page may not exist in the chosen version; fall back to
+        // that version's landing page.
+        fetch(target, { method: "HEAD" })
+          .then(function (r) { location.href = r.ok ? target : root + sel.value; })
+          .catch(function () { location.href = root + sel.value; });
+      };
+    }).catch(function () {});
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,142 @@
+:root {
+  --paper: #FCFBF8; --ink: #1C1A16; --rubric: #C0341D; --muted: #6F6A5F;
+  --rule: #E6E2D8; --code-bg: #F5F3EC; --card: #FFFFFF;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #181715; --ink: #E8E4DB; --rubric: #E25B3C; --muted: #9A947F;
+    --rule: #2E2B26; --code-bg: #211F1B; --card: #1E1C19;
+  }
+}
+* { box-sizing: border-box; margin: 0; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  background: var(--paper); color: var(--ink);
+  font-family: "Newsreader", Georgia, serif;
+  font-optical-sizing: auto; font-size: 1.125rem; line-height: 1.65;
+}
+a { color: inherit; text-decoration-color: var(--rubric); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+a:hover { color: var(--rubric); }
+code, pre {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-variant-ligatures: contextual;
+}
+p > code, li > code, h1 code, h2 code, h3 code {
+  font-size: 0.82em; background: var(--code-bg);
+  padding: 0.08em 0.35em; border-radius: 4px;
+}
+.rub { color: var(--rubric); }
+.lig { color: var(--rubric); }
+.eyebrow {
+  font-family: "JetBrains Mono", monospace; font-size: 0.72rem;
+  letter-spacing: 0.18em; color: var(--rubric); margin-bottom: 0.9rem;
+}
+
+.top {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 1.4rem clamp(1.2rem, 5vw, 4rem);
+  border-bottom: 1px solid var(--rule);
+}
+.wordmark { font-size: 1.5rem; font-weight: 600; text-decoration: none; }
+.brand { display: flex; align-items: baseline; gap: 0.9rem; }
+#vsel {
+  font-family: "JetBrains Mono", monospace; font-size: 0.72rem;
+  color: var(--muted); background: var(--code-bg);
+  border: 1px solid var(--rule); border-radius: 6px; padding: 0.2rem 0.4rem;
+}
+#vsel:hover { border-color: var(--rubric); color: var(--ink); }
+.top nav { display: flex; gap: 1.6rem; }
+.top nav a { text-decoration: none; font-size: 1rem; color: var(--muted); }
+.top nav a:hover { color: var(--rubric); }
+
+.landing { max-width: 68rem; margin: 0 auto; padding: 0 clamp(1.2rem, 5vw, 4rem); }
+.hero {
+  display: grid; grid-template-columns: minmax(12rem, 1fr) 2fr;
+  gap: clamp(1.5rem, 5vw, 4rem); align-items: center;
+  padding: clamp(2.5rem, 8vh, 6rem) 0 3rem;
+}
+.specimen { text-align: center; }
+.glyph {
+  font-size: clamp(9rem, 22vw, 16rem); line-height: 0.9;
+  color: var(--rubric); font-weight: 500;
+  font-feature-settings: "liga", "dlig";
+}
+.caption {
+  font-family: "JetBrains Mono", monospace; font-size: 0.68rem;
+  letter-spacing: 0.14em; color: var(--muted); margin-top: 1rem;
+}
+.thesis h1 {
+  font-size: clamp(2.2rem, 5.5vw, 3.6rem); font-weight: 500;
+  line-height: 1.08; letter-spacing: -0.01em; margin-bottom: 1.1rem;
+}
+.sub { font-size: 1.15rem; color: var(--muted); max-width: 34rem; }
+
+section { padding: 2.6rem 0; border-top: 1px solid var(--rule); }
+.hero { border-top: none; }
+
+.code {
+  background: var(--code-bg); border: 1px solid var(--rule); border-radius: 8px;
+  padding: 1.1rem 1.3rem; overflow-x: auto;
+  font-size: 0.86rem; line-height: 1.6; margin: 1.3rem 0;
+}
+.c-kw { font-weight: 700; }
+.c-str { color: var(--rubric); }
+.c-com { color: var(--muted); font-style: italic; }
+.c-ann { color: var(--muted); }
+
+.cards {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1rem;
+}
+.card {
+  display: block; background: var(--card); border: 1px solid var(--rule);
+  border-radius: 10px; padding: 1.2rem 1.3rem; text-decoration: none;
+}
+.card:hover { border-color: var(--rubric); color: inherit; }
+.card h3 { font-weight: 600; margin-bottom: 0.4rem; }
+.card p { color: var(--muted); font-size: 0.98rem; }
+
+.ethos ul { padding-left: 1.2rem; margin: 0.6rem 0 1rem; }
+.ethos li { margin: 0.35rem 0; }
+.more a { text-decoration: none; color: var(--rubric); }
+
+.layout {
+  display: grid; grid-template-columns: 15rem minmax(0, 1fr);
+  gap: clamp(1.5rem, 4vw, 4rem);
+  max-width: 72rem; margin: 0 auto; padding: 2.5rem clamp(1.2rem, 5vw, 4rem);
+}
+.sidenav ul { list-style: none; padding: 0; }
+.sidenav li { margin: 0.45rem 0; font-size: 1rem; }
+.sidenav a { text-decoration: none; color: var(--muted); }
+.sidenav a:hover { color: var(--rubric); }
+.sidenav .here a { color: var(--ink); font-weight: 600; }
+.sidenav .here::before { content: "\00B6\00A0"; color: var(--rubric); }
+
+.article { max-width: 44rem; }
+.article h1 { font-size: 2.3rem; font-weight: 500; line-height: 1.15; margin-bottom: 1rem; }
+.article h2 {
+  font-size: 1.45rem; font-weight: 600; margin: 2.4rem 0 0.7rem;
+}
+.article h2::before { content: "\00B6\00A0"; color: var(--rubric); font-weight: 400; }
+.article h3 { font-size: 1.15rem; margin: 1.8rem 0 0.5rem; }
+.article p { margin: 0.8rem 0; }
+.article ul { padding-left: 1.3rem; margin: 0.8rem 0; }
+.edit { margin-top: 3rem; font-size: 0.95rem; }
+.edit a { color: var(--muted); }
+
+.foot {
+  border-top: 1px solid var(--rule); margin-top: 3rem;
+  padding: 1.6rem clamp(1.2rem, 5vw, 4rem);
+  color: var(--muted); font-size: 0.98rem;
+}
+
+@media (max-width: 760px) {
+  .hero { grid-template-columns: 1fr; text-align: left; }
+  .specimen { text-align: left; }
+  .layout { grid-template-columns: 1fr; }
+  .sidenav { border-bottom: 1px solid var(--rule); padding-bottom: 1rem; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .glyph { transition: transform 0.4s ease; }
+  .specimen:hover .glyph { transform: translateY(-4px); }
+}

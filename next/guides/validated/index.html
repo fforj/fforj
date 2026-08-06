@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Validated: every error, at once · ﬀorj</title>
+<meta name="description" content="Like Result, but Invalid accumulates all errors instead of stopping at the first.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22 font-family=%22Georgia,serif%22 fill=%22%23C0341D%22>ﬀ</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <a class="wordmark" href="../../index.html"><span class="lig">ﬀ</span>orj</a>
+    <select id="vsel" aria-label="Documentation version"
+            data-prefix="next/" data-page="guides/validated/index.html"><option>main</option></select>
+  </div>
+  <nav>
+    <a href="../../index.html#guides">Guides</a>
+    <a href="../../api/index.html">API</a>
+    <a href="https://github.com/fforj/fforj">GitHub</a>
+  </nav>
+</header>
+<div class="layout">
+<aside class="sidenav">
+<div class="eyebrow">GUIDES</div>
+<ul>
+<li><a href="../result/index.html">Result: errors as values</a></li>
+<li class="here"><a href="../validated/index.html">Validated: every error, at once</a></li>
+<li><a href="../nonemptylist/index.html">NonEmptyList: emptiness, unrepresentable</a></li>
+<li><a href="../retry/index.html">Retry: backoff without a framework</a></li>
+<li><a href="../order/index.html">Putting it together: an order, end to end</a></li>
+</ul>
+</aside>
+<main class="article">
+<h1>Validated: every error, at once</h1>
+<p><code>Result</code> stops at the first failure. That is right for dependent steps and wrong for forms. When a user submits three broken fields, telling them about one is a bad product. <code>Validated&lt;E, T&gt;</code> accumulates: its <code>Invalid</code> case carries a <code>NonEmptyList&lt;E&gt;</code> of everything that went wrong.</p>
+<pre class="code"><code><span class="c-kw">record</span> Form(String name, String email, <span class="c-kw">int</span> age) {}</code></pre>
+<pre class="code"><code><span class="c-kw">static</span> Validated&lt;String, String&gt; nonBlank(String field, String value) {
+    <span class="c-kw">return</span> value.isBlank()
+            ? Validated.invalid(field + <span class="c-str">" must not be blank"</span>)
+            : Validated.valid(value);
+}</code></pre>
+<pre class="code"><code><span class="c-kw">static</span> Validated&lt;String, Integer&gt; validAge(<span class="c-kw">int</span> age) {
+    <span class="c-kw">return</span> age &gt; 0
+            ? Validated.valid(age)
+            : Validated.invalid(<span class="c-str">"age must be positive, was "</span> + age);
+}</code></pre>
+<h2 id="two-fields-zip">Two fields: <code>zip</code></h2>
+<p><code>zip</code> combines two independent validations. If both are valid it applies the function; if either failed, the errors propagate; if <em>both</em> failed, the errors concatenate. Nothing is dropped.</p>
+<pre class="code"><code>Validated&lt;String, String&gt; greeting =
+        nonBlank(<span class="c-str">"name"</span>, <span class="c-str">""</span>).zip(nonBlank(<span class="c-str">"email"</span>, <span class="c-str">" "</span>),
+                (name, email) -&gt; name + <span class="c-str">" &lt;"</span> + email + <span class="c-str">"&gt;"</span>);
+
+assertEquals(
+        Validated.invalid(NonEmptyList.of(
+                <span class="c-str">"name must not be blank"</span>,
+                <span class="c-str">"email must not be blank"</span>)),
+        greeting);</code></pre>
+<h2 id="n-fields-the-accumulate-block">N fields: the <code>accumulate</code> block</h2>
+<p>Past two fields, chained <code>zip</code>s turn into currying gymnastics. <code>accumulate</code> is the arity-free form. Bind each validation with <code>acc.on(...)</code>, which records a failure without stopping later validations from running, then unwrap with <code>.value()</code> at the end. The result is <code>Valid</code> only if nothing failed, otherwise <code>Invalid</code> with every error in binding order.</p>
+<pre class="code"><code>Validated&lt;String, Form&gt; form = Validated.accumulate(acc -&gt; {
+    <span class="c-kw">var</span> name = acc.on(nonBlank(<span class="c-str">"name"</span>, <span class="c-str">""</span>));
+    <span class="c-kw">var</span> email = acc.on(nonBlank(<span class="c-str">"email"</span>, <span class="c-str">"ada@analytical.engine"</span>));
+    <span class="c-kw">var</span> age = acc.on(validAge(-3));
+    <span class="c-kw">return</span> <span class="c-kw">new</span> Form(name.value(), email.value(), age.value());
+});
+
+assertEquals(
+        Validated.invalid(NonEmptyList.of(
+                <span class="c-str">"name must not be blank"</span>,
+                <span class="c-str">"age must be positive, was -3"</span>)),
+        form);</code></pre>
+<h2 id="mix-in-result-and-optional">Mix in Result and Optional</h2>
+<p>Real validation pipelines aren't uniform: some steps return <code>Result</code>, some return <code>Optional</code>. The accumulator binds all three shapes side by side: a <code>Result.Err</code> accumulates as a single error, and an empty <code>Optional</code> accumulates the error you name for it.</p>
+<pre class="code"><code>Validated&lt;String, String&gt; v = Validated.accumulate(acc -&gt; {
+    <span class="c-kw">var</span> fromValidated = acc.on(nonBlank(<span class="c-str">"name"</span>, <span class="c-str">""</span>));
+    <span class="c-kw">var</span> fromResult = acc.on(
+            Result.&lt;String, String&gt;err(<span class="c-str">"country not recognized"</span>));
+    <span class="c-kw">var</span> fromOptional = acc.on(
+            Optional.&lt;String&gt;empty(), () -&gt; <span class="c-str">"currency is required"</span>);
+    <span class="c-kw">return</span> fromValidated.value() + fromResult.value() + fromOptional.value();
+});
+
+assertEquals(
+        Validated.invalid(NonEmptyList.of(
+                <span class="c-str">"name must not be blank"</span>,
+                <span class="c-str">"country not recognized"</span>,
+                <span class="c-str">"currency is required"</span>)),
+        v);</code></pre>
+<pre class="code"><code><span class="c-kw">static</span> Validated&lt;String, Integer&gt; quantity(String raw) {
+    <span class="c-kw">int</span> n;
+    <span class="c-kw">try</span> {
+        n = Integer.parseInt(raw);
+    } <span class="c-kw">catch</span> (NumberFormatException e) {
+        <span class="c-kw">return</span> Validated.invalid(<span class="c-str">"not a number: "</span> + raw);
+    }
+    <span class="c-kw">return</span> n &gt; 0
+            ? Validated.valid(n)
+            : Validated.invalid(<span class="c-str">"quantity must be positive, was "</span> + n);
+}</code></pre>
+<h2 id="whole-collections-oneach">Whole collections: <code>onEach</code></h2>
+<p>Accumulation earns its keep most when the input is a <em>collection</em>. Reject a CSV import row by row and your users will resubmit all day. <code>acc.onEach</code> binds a validation of every element: each failing element contributes its error, and the bound value is the fully-parsed list. (Outside the DSL, the same operation is <code>Validated.traverse</code>, with an overload that takes a <code>NonEmptyList</code> and gives one back.)</p>
+<pre class="code"><code>Validated&lt;String, List&lt;Integer&gt;&gt; quantities = Validated.accumulate(acc -&gt;
+        acc.onEach(List.of(<span class="c-str">"3"</span>, <span class="c-str">"-1"</span>, <span class="c-str">"0"</span>, <span class="c-str">"12"</span>), ValidatedDocTest::quantity).value());
+
+assertEquals(
+        Validated.invalid(NonEmptyList.of(
+                <span class="c-str">"quantity must be positive, was -1"</span>,
+                <span class="c-str">"quantity must be positive, was 0"</span>)),
+        quantities);</code></pre>
+<h2 id="rules-without-values-ensure">Rules without values: <code>ensure</code></h2>
+<p>Some validations have no value to bind: a limit, a cross-field rule, a permission. <code>acc.ensure</code> reads like an assertion but accumulates like everything else: a false condition records the error and the block keeps running, so later checks still contribute theirs.</p>
+<pre class="code"><code><span class="c-kw">record</span> Transfer(<span class="c-kw">int</span> amount, String memo) {}
+<span class="c-kw">var</span> transfer = <span class="c-kw">new</span> Transfer(15_000, <span class="c-str">""</span>);
+
+Validated&lt;String, Transfer&gt; checked = Validated.accumulate(acc -&gt; {
+    acc.ensure(transfer.amount() &lt;= 10_000, () -&gt; <span class="c-str">"amount exceeds the transfer limit"</span>);
+    acc.ensure(!transfer.memo().isBlank(), () -&gt; <span class="c-str">"a memo is required"</span>);
+    <span class="c-kw">return</span> transfer;
+});
+
+assertEquals(
+        Validated.invalid(NonEmptyList.of(
+                <span class="c-str">"amount exceeds the transfer limit"</span>,
+                <span class="c-str">"a memo is required"</span>)),
+        checked);</code></pre>
+<h2 id="translate-the-whole-batch-maperr">Translate the whole batch: <code>mapErr</code></h2>
+<p>Domain errors rarely leave the system as-is. <code>mapErr</code> transforms every error in the batch at once (it is the accumulating counterpart of <code>Result.mapErr</code>), so the boundary can speak API while the core keeps speaking domain:</p>
+<pre class="code"><code><span class="c-kw">var</span> form = nonBlank(<span class="c-str">"name"</span>, <span class="c-str">""</span>).zip(nonBlank(<span class="c-str">"email"</span>, <span class="c-str">" "</span>), (n, e) -&gt; n + e)
+        .mapErr(problem -&gt; <span class="c-str">"REG-400: "</span> + problem);
+
+assertEquals(
+        Validated.invalid(NonEmptyList.of(
+                <span class="c-str">"REG-400: name must not be blank"</span>,
+                <span class="c-str">"REG-400: email must not be blank"</span>)),
+        form);</code></pre>
+<h2 id="back-to-result-when-you-re-done">Back to Result when you're done</h2>
+<p>Accumulation is for the boundary; once errors are gathered you often want the short-circuiting world back. <code>toResult</code> collapses <code>Invalid</code> into a single <code>Err</code> carrying the whole batch.</p>
+<pre class="code"><code>Validated&lt;String, Integer&gt; invalid =
+        Validated.invalid(NonEmptyList.of(<span class="c-str">"too short"</span>, <span class="c-str">"too vague"</span>));
+
+Result&lt;NonEmptyList&lt;String&gt;, Integer&gt; r = invalid.toResult();
+
+assertEquals(Result.err(NonEmptyList.of(<span class="c-str">"too short"</span>, <span class="c-str">"too vague"</span>)), r);</code></pre>
+<p class="edit"><a href="https://github.com/fforj/fforj/blob/main/src/test/java/dev/fforj/docs/ValidatedDocTest.java">This page is generated from a test file. Read or improve it on GitHub.</a></p>
+</main>
+</div>
+
+<footer class="foot">
+  <p><span class="lig rub">ﬀ</span>orj is MIT-licensed.
+  Every example on this site is a test in the
+  <a href="https://github.com/fforj/fforj">repository</a>;
+  the suite ran green before this page was built.</p>
+</footer>
+<script>
+(function () {
+  var sel = document.getElementById("vsel");
+  var prefix = sel.dataset.prefix, page = sel.dataset.page;
+  var path = location.pathname;
+  // Site root = current path minus this build's prefix and page path,
+  // tolerating servers that serve directories without "index.html".
+  var root = null;
+  var suffix = prefix + page;
+  if (path.endsWith(suffix)) {
+    root = path.slice(0, path.length - suffix.length);
+  } else if (suffix.endsWith("index.html")) {
+    var dir = suffix.slice(0, suffix.length - "index.html".length);
+    if (path.endsWith(dir)) root = path.slice(0, path.length - dir.length);
+  }
+  if (root === null) return;
+  fetch(root + "versions.json").then(function (r) { return r.json(); })
+    .then(function (v) {
+      sel.innerHTML = "";
+      v.entries.forEach(function (e) {
+        var o = document.createElement("option");
+        o.value = e.path;
+        o.textContent = e.label;
+        if (e.path === prefix) o.selected = true;
+        sel.appendChild(o);
+      });
+      sel.onchange = function () {
+        var target = root + sel.value + page;
+        // Same page may not exist in the chosen version; fall back to
+        // that version's landing page.
+        fetch(target, { method: "HEAD" })
+          .then(function (r) { location.href = r.ok ? target : root + sel.value; })
+          .catch(function () { location.href = root + sel.value; });
+      };
+    }).catch(function () {});
+})();
+</script>
+</body>
+</html>

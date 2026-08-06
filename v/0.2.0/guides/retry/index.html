@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Retry: backoff without a framework · ﬀorj</title>
+<meta name="description" content="A policy-driven retry loop over Result, built for virtual threads.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22 font-family=%22Georgia,serif%22 fill=%22%23C0341D%22>ﬀ</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <a class="wordmark" href="../../index.html"><span class="lig">ﬀ</span>orj</a>
+    <select id="vsel" aria-label="Documentation version"
+            data-prefix="v/0.2.0/" data-page="guides/retry/index.html"><option>0.2.0</option></select>
+  </div>
+  <nav>
+    <a href="../../index.html#guides">Guides</a>
+    <a href="../../api/index.html">API</a>
+    <a href="https://github.com/fforj/fforj">GitHub</a>
+  </nav>
+</header>
+<div class="layout">
+<aside class="sidenav">
+<div class="eyebrow">GUIDES</div>
+<ul>
+<li><a href="../result/index.html">Result: errors as values</a></li>
+<li><a href="../validated/index.html">Validated: every error, at once</a></li>
+<li><a href="../nonemptylist/index.html">NonEmptyList: emptiness, unrepresentable</a></li>
+<li class="here"><a href="../retry/index.html">Retry: backoff without a framework</a></li>
+<li><a href="../order/index.html">Putting it together: an order, end to end</a></li>
+</ul>
+</aside>
+<main class="article">
+<h1>Retry: backoff without a framework</h1>
+<p><code>Retry.run</code> re-invokes a <code>Result</code>-returning operation until it succeeds, the error stops being worth retrying, or attempts run out. It blocks with <code>Thread.sleep</code> between attempts, which is just fine on virtual threads: sleeping there is cheap and needs no scheduler machinery. Cancellation is cooperative: interrupt the thread and the loop exits with <code>InterruptedException</code> immediately.</p>
+<pre class="code"><code><span class="c-kw">enum</span> ApiError { RateLimited, InvalidApiKey }</code></pre>
+<h2 id="retry-transient-errors-until-one-succeeds">Retry transient errors until one succeeds</h2>
+<p>A <code>Policy</code> is three numbers: total attempts, initial delay, backoff factor. The operation returns <code>Result</code>, so "failed this time" is a value, not an exception. The retry loop owns the attempt counter and hands the body the current attempt number, so you never track one in outside mutable state:</p>
+<pre class="code"><code><span class="c-kw">var</span> policy = Retry.Policy.exponential(5, Duration.ZERO);
+
+Result&lt;ApiError, String&gt; r = Retry.run(policy, e -&gt; true, attempt -&gt;
+        attempt &lt; 3
+                ? Result.err(ApiError.RateLimited)
+                : Result.ok(<span class="c-str">"fetched on attempt "</span> + attempt));
+
+assertEquals(Result.ok(<span class="c-str">"fetched on attempt 3"</span>), r);</code></pre>
+<h2 id="not-every-error-deserves-a-retry">Not every error deserves a retry</h2>
+<p>The predicate looks at the <em>typed</em> error and decides. A rate limit is worth waiting out. A bad API key never fixes itself, so retrying it three times just adds latency to the same failure. Terminal errors surface immediately, and this example proves it in the value: a second attempt would return <code>Ok</code>, so the <code>Err</code> in the assertion is evidence that no second attempt ever ran.</p>
+<pre class="code"><code><span class="c-kw">var</span> policy = Retry.Policy.fixed(5, Duration.ZERO);
+
+Result&lt;ApiError, String&gt; r = Retry.run(
+        policy,
+        e -&gt; e == ApiError.RateLimited,     <span class="c-com">// only transient errors retry</span>
+        attempt -&gt; attempt == 1
+                ? Result.err(ApiError.InvalidApiKey)
+                : Result.ok(<span class="c-str">"a second attempt would have succeeded"</span>));
+
+assertEquals(Result.err(ApiError.InvalidApiKey), r);</code></pre>
+<h2 id="cap-the-backoff-spread-the-herd">Cap the backoff, spread the herd</h2>
+<p>Uncapped exponential backoff gets silly fast: attempt 10 of a 1-second doubling policy sleeps for eight and a half minutes. <code>withMaxDelay</code> bounds every delay, and <code>withJitter</code> scales each sleep by a random factor so a thousand clients retrying in lockstep don't hammer the service in waves. The plan itself stays inspectable: <code>delayBefore</code> is pure (jitter applies only at sleep time), so you can assert your policy's timing without sleeping through it.</p>
+<pre class="code"><code><span class="c-kw">var</span> policy = Retry.Policy.exponential(6, Duration.ofMillis(100))
+        .withMaxDelay(Duration.ofMillis(400))
+        .withJitter(0.2);                  <span class="c-com">// ±20% at sleep time, not in the plan</span>
+
+assertEquals(Duration.ofMillis(100), policy.delayBefore(2));
+assertEquals(Duration.ofMillis(200), policy.delayBefore(3));
+assertEquals(Duration.ofMillis(400), policy.delayBefore(4));   <span class="c-com">// capped</span>
+assertEquals(Duration.ofMillis(400), policy.delayBefore(5));   <span class="c-com">// stays capped</span></code></pre>
+<h2 id="exhaustion-returns-the-last-error">Exhaustion returns the last error</h2>
+<p>When every attempt fails, you get the most recent <code>Err</code> back: a value you can log, map, or feed into a fallback, because the failure never stopped being data.</p>
+<pre class="code"><code><span class="c-kw">var</span> policy = Retry.Policy.fixed(3, Duration.ZERO);
+
+Result&lt;ApiError, String&gt; r =
+        Retry.run(policy, e -&gt; true, () -&gt; Result.err(ApiError.RateLimited));
+
+assertEquals(Result.err(ApiError.RateLimited), r);</code></pre>
+<p class="edit"><a href="https://github.com/fforj/fforj/blob/main/src/test/java/dev/fforj/docs/RetryDocTest.java">This page is generated from a test file. Read or improve it on GitHub.</a></p>
+</main>
+</div>
+
+<footer class="foot">
+  <p><span class="lig rub">ﬀ</span>orj is MIT-licensed.
+  Every example on this site is a test in the
+  <a href="https://github.com/fforj/fforj">repository</a>;
+  the suite ran green before this page was built.</p>
+</footer>
+<script>
+(function () {
+  var sel = document.getElementById("vsel");
+  var prefix = sel.dataset.prefix, page = sel.dataset.page;
+  var path = location.pathname;
+  // Site root = current path minus this build's prefix and page path,
+  // tolerating servers that serve directories without "index.html".
+  var root = null;
+  var suffix = prefix + page;
+  if (path.endsWith(suffix)) {
+    root = path.slice(0, path.length - suffix.length);
+  } else if (suffix.endsWith("index.html")) {
+    var dir = suffix.slice(0, suffix.length - "index.html".length);
+    if (path.endsWith(dir)) root = path.slice(0, path.length - dir.length);
+  }
+  if (root === null) return;
+  fetch(root + "versions.json").then(function (r) { return r.json(); })
+    .then(function (v) {
+      sel.innerHTML = "";
+      v.entries.forEach(function (e) {
+        var o = document.createElement("option");
+        o.value = e.path;
+        o.textContent = e.label;
+        if (e.path === prefix) o.selected = true;
+        sel.appendChild(o);
+      });
+      sel.onchange = function () {
+        var target = root + sel.value + page;
+        // Same page may not exist in the chosen version; fall back to
+        // that version's landing page.
+        fetch(target, { method: "HEAD" })
+          .then(function (r) { location.href = r.ok ? target : root + sel.value; })
+          .catch(function () { location.href = root + sel.value; });
+      };
+    }).catch(function () {});
+})();
+</script>
+</body>
+</html>
