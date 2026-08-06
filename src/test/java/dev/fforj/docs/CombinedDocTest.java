@@ -13,6 +13,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /// ---
 /// title: Putting it together — an order, end to end
@@ -27,47 +28,96 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 /// order — from raw untrusted input to the final response.
 ///
 /// The domain first. `RawOrder` is what arrives over the wire: all strings, anything
-/// possible. `Order` is what the rest of the system works with — and note the items:
-/// a `NonEmptyList`, because an order with zero items shouldn't be *checked for*
-/// downstream, it should be impossible to construct. One sealed error type covers
-/// everything that can go wrong, boundary or core:
+/// possible. `Order` is what the rest of the system works with, and none of its
+/// fields are strings: each is a domain type that follows
+/// [parse, don't validate](https://lexi-lambda.github.io/blog/2019/11/05/parse-don-t-validate/).
+/// Every type has a *wall* — a constructor that makes an illegal value impossible to
+/// construct — and the fallible ones have a *door*: a static `parse` returning
+/// `Validated`, so boundary failures can accumulate:
 class CombinedDocTest {
 
     // site:include
     record RawOrder(String email, List<String> skus, String country) {}
 
     // site:include
-    record Order(String email, NonEmptyList<String> skus, String country) {}
-
-    // site:include
     sealed interface OrderError {
         record BadEmail(String raw) implements OrderError {}
         record NoItems() implements OrderError {}
         record UnknownCountry(String raw) implements OrderError {}
-        record OutOfStock(String sku) implements OrderError {}
+        record OutOfStock(Sku sku) implements OrderError {}
         record PaymentFailed(String reason) implements OrderError {}
     }
 
     // site:include
-    static final Set<String> SHIPS_TO = Set.of("RO", "NL", "DE");
+    record Email(String value) {
+        Email {                                     // the wall: an illegal Email cannot exist
+            if (!value.contains("@")) {
+                throw new IllegalArgumentException("not an email: " + value);
+            }
+        }
+
+        static Validated<OrderError, Email> parse(String raw) {   // the door: typed errors
+            return raw.contains("@")
+                    ? Validated.valid(new Email(raw))
+                    : Validated.invalid(new OrderError.BadEmail(raw));
+        }
+    }
+
+    // site:include
+    record Country(String code) {
+        static final Set<String> SHIPS_TO = Set.of("RO", "NL", "DE");
+
+        Country {
+            if (!SHIPS_TO.contains(code)) {
+                throw new IllegalArgumentException("no shipping to: " + code);
+            }
+        }
+
+        static Validated<OrderError, Country> parse(String raw) {
+            return SHIPS_TO.contains(raw)
+                    ? Validated.valid(new Country(raw))
+                    : Validated.invalid(new OrderError.UnknownCountry(raw));
+        }
+    }
+
+    // site:include
+    record Sku(String code) {
+        Sku {
+            if (code.isBlank()) {
+                throw new IllegalArgumentException("blank SKU");
+            }
+        }
+    }
+
+    // site:include
+    record Order(Email email, NonEmptyList<Sku> items, Country country) {}
+
+    /// Note what `Order` rules out by shape alone: a malformed email, a country we
+    /// don't ship to, a blank SKU, and — because `items` is a `NonEmptyList` — an
+    /// order with nothing in it. Downstream code never re-checks any of this; the
+    /// proof lives in the types. The wall holds even against code that skips the
+    /// door:
+    @Test
+    void the_wall_rejects_what_the_door_would() {
+        assertThrows(IllegalArgumentException.class, () -> new Email("not-an-email"));
+        assertThrows(IllegalArgumentException.class, () -> new Country("XX"));
+    }
 
     /// ## The boundary: accumulate everything
     ///
     /// Field validations are independent, so a failure in one must not hide a failure
-    /// in another. `accumulate` binds all three — note `NonEmptyList.fromList` doing
-    /// double duty: it *is* the items validation, and its empty case accumulates
-    /// `NoItems` alongside whatever else is wrong.
+    /// in another. `accumulate` binds all three doors — and note `NonEmptyList.fromList`
+    /// doing double duty: it *is* the items validation, its empty case accumulating
+    /// `NoItems` alongside whatever else is wrong. The final line assembles the
+    /// domain: `map(Sku::new)` walks through the wall, and non-emptiness survives
+    /// `map` by construction.
     // site:include
     static Validated<OrderError, Order> parse(RawOrder raw) {
         return Validated.accumulate(acc -> {
-            var email = acc.on(raw.email().contains("@")
-                    ? Validated.<OrderError, String>valid(raw.email())
-                    : Validated.invalid(new OrderError.BadEmail(raw.email())));
-            var skus = acc.on(NonEmptyList.fromList(raw.skus()), OrderError.NoItems::new);
-            var country = acc.on(SHIPS_TO.contains(raw.country())
-                    ? Validated.<OrderError, String>valid(raw.country())
-                    : Validated.invalid(new OrderError.UnknownCountry(raw.country())));
-            return new Order(email.value(), skus.value(), country.value());
+            var email = acc.on(Email.parse(raw.email()));
+            var items = acc.on(NonEmptyList.fromList(raw.skus()), OrderError.NoItems::new);
+            var country = acc.on(Country.parse(raw.country()));
+            return new Order(email.value(), items.value().map(Sku::new), country.value());
         });
     }
 
@@ -83,14 +133,16 @@ class CombinedDocTest {
                 parse(raw));
     }
 
-    /// Past the boundary, the guarantees hold by construction — `head()` needs no
-    /// emptiness check, because emptiness can't get this far:
+    /// Past the boundary, the guarantees hold by construction — every field is
+    /// already a domain type, and no later code path can un-prove them:
     @Test
     void a_parsed_order_carries_its_invariants() {
         var order = parse(new RawOrder("ada@lovelace.dev", List.of("SKU-1", "SKU-2"), "RO"));
 
-        assertEquals(Validated.valid(
-                new Order("ada@lovelace.dev", NonEmptyList.of("SKU-1", "SKU-2"), "RO")), order);
+        assertEquals(Validated.valid(new Order(
+                new Email("ada@lovelace.dev"),
+                NonEmptyList.of(new Sku("SKU-1"), new Sku("SKU-2")),
+                new Country("RO"))), order);
     }
 
     /// ## The core: short-circuit dependent steps
@@ -98,12 +150,13 @@ class CombinedDocTest {
     /// After parsing, the steps *depend* on each other — there's no point pricing an
     /// order that failed the stock check, and no point charging for it either. That's
     /// `Result` territory. The stock check returns a `Result`; the payment gateway is
-    /// the other kind of boundary — it *throws* — so `attempt` wraps it into the same
-    /// typed world:
+    /// the other kind of boundary — it *throws* — so `attempt` will wrap it into the
+    /// same typed world. Notice both speak in domain types: `OutOfStock` carries a
+    /// `Sku`, the gateway takes an `Email`.
     // site:include
     static Result<OrderError, Order> checkStock(Order order, Set<String> inStock) {
-        return order.skus().stream()
-                .filter(sku -> !inStock.contains(sku))
+        return order.items().stream()
+                .filter(sku -> !inStock.contains(sku.code()))
                 .findFirst()
                 .<Result<OrderError, Order>>map(gone -> Result.err(new OrderError.OutOfStock(gone)))
                 .orElse(Result.ok(order));
@@ -112,7 +165,7 @@ class CombinedDocTest {
     // site:include
     @FunctionalInterface
     interface Gateway {
-        String charge(String email, int cents) throws IOException;
+        String charge(Email email, int cents) throws IOException;
     }
 
     /// ## The bridge: one error channel for both worlds
@@ -127,7 +180,7 @@ class CombinedDocTest {
         return Result.binding(bind -> {
             Order order = bind.on(parse(raw).toResult());                  // all boundary errors at once
             bind.on(checkStock(order, inStock).mapErr(NonEmptyList::of));  // then fail fast
-            int cents = order.skus().size() * 700;
+            int cents = order.items().size() * 700;
             return bind.on(Result.attempt(
                     () -> gateway.charge(order.email(), cents),
                     t -> new OrderError.PaymentFailed(t.getMessage()))
@@ -136,7 +189,7 @@ class CombinedDocTest {
     }
 
     @Test
-    void a_valid_order_flows_straight_through() throws Exception {
+    void a_valid_order_flows_straight_through() {
         var raw = new RawOrder("ada@lovelace.dev", List.of("SKU-1"), "RO");
 
         Result<NonEmptyList<OrderError>, String> placed =
@@ -174,7 +227,8 @@ class CombinedDocTest {
             throw new IOException("must not be reached");
         });
 
-        assertEquals(Result.err(NonEmptyList.of(new OrderError.OutOfStock("SKU-9"))), placed);
+        assertEquals(Result.err(NonEmptyList.of(
+                new OrderError.OutOfStock(new Sku("SKU-9")))), placed);
     }
 
     /// And a throwing gateway becomes a typed error like everything else:
