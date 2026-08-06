@@ -11,15 +11,16 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /// ---
-/// title: Result — errors as values
+/// title: Result: errors as values
 /// slug: result
 /// order: 1
 /// summary: A sealed Ok | Err sum type. Pattern-match failures instead of throwing them.
 /// ---
 ///
 /// `Result<E, T>` is an operation that either succeeded with a `T` or failed with an
-/// `E`. Both outcomes are ordinary values, so failure handling becomes code you can
-/// read, type-check, and test — not a control-flow surprise three stack frames up.
+/// `E`. Both outcomes are ordinary values, so failure handling becomes plain code you
+/// can read, type-check, and test, instead of a control-flow surprise three stack
+/// frames up.
 ///
 /// Errors are typed. Instead of `String` messages or a grab-bag `Exception`, model
 /// the ways an operation can fail as a small sealed hierarchy:
@@ -46,8 +47,8 @@ class ResultDocTest {
     ///
     /// `Result` is a sealed interface with two record cases, `Ok` and `Err`. A `switch`
     /// over it is exhaustive: handle both cases or the compiler stops you. Combinators
-    /// exist for chains, but this is the primary interface — no method to memorize,
-    /// just the language.
+    /// exist for chains, but this is the primary interface. There is no method to
+    /// memorize, just the language.
     @Test
     void match_both_cases_exhaustively() {
         String message = switch (parsePositive("-3")) {
@@ -65,7 +66,7 @@ class ResultDocTest {
     ///
     /// `map` transforms a success and leaves an error untouched; `flatMap` chains
     /// another fallible step; `recover` turns an error back into a success. Chains
-    /// stop doing work at the first `Err` — no null checks, no nesting.
+    /// stop doing work at the first `Err`. No null checks, no nesting.
     @Test
     void chain_fallible_steps() {
         Result<ParseError, Integer> doubled = parsePositive("21").map(n -> n * 2);
@@ -82,7 +83,7 @@ class ResultDocTest {
     /// ## Wrap code that throws
     ///
     /// The world is full of APIs that throw. `attempt` runs a block, catches anything
-    /// thrown, and maps it into your error type — several dependent throwing calls
+    /// thrown, and maps it into your error type. Several dependent throwing calls
     /// compose as straight-line code, and the first throw short-circuits the rest.
     @Test
     void capture_throwing_calls_as_typed_errors() {
@@ -124,7 +125,7 @@ class ResultDocTest {
 
     /// ## Guards without values: `ensure`
     ///
-    /// Not every rule produces a value — some just have to hold. `bind.ensure` reads
+    /// Not every rule produces a value; some just have to hold. `bind.ensure` reads
     /// like an assertion but fails like everything else here: as a typed `Err` that
     /// short-circuits the block.
     @Test

@@ -13,7 +13,7 @@ import java.util.function.Supplier;
  * short-circuiting on the first one.
  *
  * <p>Pick {@code Validated} over {@link Result} when you want every reason a form,
- * config, or DTO is invalid — not just the first.
+ * config, or DTO is invalid, not just the first.
  *
  * <pre>{@code
  * Validated<String, Form> v = nameField.zip(emailField, Form::new);
@@ -27,7 +27,7 @@ public sealed interface Validated<E, T> {
     record Valid<E, T>(T value) implements Validated<E, T> {
         public Valid {
             Objects.requireNonNull(value,
-                    "Valid value must not be null — use Optional<T> for absence");
+                    "Valid value must not be null; use Optional<T> for absence");
         }
     }
 
@@ -65,13 +65,13 @@ public sealed interface Validated<E, T> {
     }
 
     /**
-     * Validate every element of a list with one function, accumulating every failure —
+     * Validate every element of a list with one function, accumulating every failure:
      * the accumulative "traverse". {@link Valid} of the parsed elements (in input
      * order) only if every element passed; otherwise {@link Invalid} carrying the
      * errors of <em>every</em> failed element, in input order.
      *
      * <p>An empty list is trivially {@code Valid} of an empty list. When emptiness is
-     * itself a failure, pair with {@code NonEmptyList.fromList} — or use the
+     * itself a failure, pair with {@code NonEmptyList.fromList}, or use the
      * {@link #traverse(NonEmptyList, Function) NonEmptyList overload}, which carries
      * non-emptiness through: non-empty in, non-empty out.
      */
@@ -109,7 +109,7 @@ public sealed interface Validated<E, T> {
      * unwrapped.
      *
      * <p>Binding ({@link Accumulator#on}) and unwrapping ({@link #value()}) are separate
-     * steps on purpose: binding never aborts the block — it only records the error — so
+     * steps on purpose. Binding never aborts the block, it only records the error, so
      * every validation gets a chance to run and contribute its error before the first
      * unwrap of a failed binding stops the block. Bind everything first, unwrap at the end.
      */
@@ -130,7 +130,7 @@ public sealed interface Validated<E, T> {
         /**
          * Bind a {@code Validated}: a {@code Valid}'s value becomes available via
          * {@link Bound#value()}; an {@code Invalid}'s errors are added to the
-         * accumulator. Binding never aborts the block — later validations still run.
+         * accumulator. Binding never aborts the block; later validations still run.
          */
         <T> Bound<T> on(Validated<E, T> validated);
 
@@ -156,7 +156,7 @@ public sealed interface Validated<E, T> {
         }
 
         /**
-         * Check a condition with no value to bind — a guard, a limit, a cross-field
+         * Check a condition with no value to bind: a guard, a limit, a cross-field
          * rule. {@code false} records the error and the block <em>keeps running</em>,
          * like every other binding; {@code true} records nothing.
          */
@@ -170,7 +170,7 @@ public sealed interface Validated<E, T> {
 
     /**
      * Error-accumulation DSL: validate several independent pieces as straight-line code
-     * and surface <em>every</em> failure at once — the {@code Validated} counterpart of
+     * and surface <em>every</em> failure at once. The {@code Validated} counterpart of
      * {@code Result.binding}, and the arity-free alternative to chained
      * {@link #zip(Validated, BiFunction) zip} calls.
      *
@@ -198,7 +198,7 @@ public sealed interface Validated<E, T> {
      * <p>The abort uses the same private control-flow exception mechanism as
      * {@code Result.binding} (see ADR-1), with the same caveats: don't wrap unwraps in a
      * catch-all {@code catch (RuntimeException e)}, and don't let {@code Bound} handles
-     * escape the block. Nested {@code accumulate} blocks are safe — each abort carries the
+     * escape the block. Nested {@code accumulate} blocks are safe: each abort carries the
      * identity of the block that created it and unwinds to that block's boundary.
      *
      * @param block receives the {@link Accumulator} and returns the composed value.
@@ -209,7 +209,7 @@ public sealed interface Validated<E, T> {
         Objects.requireNonNull(block, "accumulate block must not be null");
 
         // Same mechanism as Result.binding (ADR-1): a stack-trace-free Halt subclass.
-        // Carries no payload — the errors live in the accumulator list.
+        // Carries no payload; the errors live in the accumulator list.
         final class Abort extends Halt {
             Abort(Object owner) {
                 super(owner);
@@ -249,7 +249,7 @@ public sealed interface Validated<E, T> {
             return new Valid<>(outcome);
         }
         // The block completed without unwrapping any failed binding, but failures were
-        // recorded — the result is still Invalid; accumulation doesn't depend on unwraps.
+        // recorded, so the result is still Invalid. Accumulation doesn't depend on unwraps.
         return new Invalid<>(toNonEmpty(errors));
     }
 
@@ -285,7 +285,7 @@ public sealed interface Validated<E, T> {
 
     /**
      * Transform every error in the batch; preserve the valid value. The accumulating
-     * counterpart of {@code Result.mapErr} — typically used at the boundary to
+     * counterpart of {@code Result.mapErr}, typically used at the boundary to
      * translate domain errors into API- or user-facing shapes without losing any of
      * the batch.
      */

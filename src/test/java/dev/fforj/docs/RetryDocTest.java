@@ -9,7 +9,7 @@ import java.time.Duration;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /// ---
-/// title: Retry — backoff without a framework
+/// title: Retry: backoff without a framework
 /// slug: retry
 /// order: 4
 /// summary: A policy-driven retry loop over Result, built for virtual threads.
@@ -17,8 +17,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 ///
 /// `Retry.run` re-invokes a `Result`-returning operation until it succeeds, the
 /// error stops being worth retrying, or attempts run out. It blocks with
-/// `Thread.sleep` between attempts — which is exactly right on virtual threads,
-/// where sleeping is cheap and no scheduler machinery is needed. Cancellation is
+/// `Thread.sleep` between attempts, which is just fine on virtual threads: sleeping
+/// there is cheap and needs no scheduler machinery. Cancellation is
 /// cooperative: interrupt the thread and the loop exits with
 /// `InterruptedException` immediately.
 class RetryDocTest {
@@ -30,8 +30,8 @@ class RetryDocTest {
     ///
     /// A `Policy` is three numbers: total attempts, initial delay, backoff factor.
     /// The operation returns `Result`, so "failed this time" is a value, not an
-    /// exception — and the retry loop owns the attempt counter, handing the body the
-    /// current attempt number so you never track one in outside mutable state:
+    /// exception. The retry loop owns the attempt counter and hands the body the
+    /// current attempt number, so you never track one in outside mutable state:
     @Test
     void succeed_on_a_later_attempt() throws InterruptedException {
         var policy = Retry.Policy.exponential(5, Duration.ZERO);
@@ -47,10 +47,10 @@ class RetryDocTest {
     /// ## Not every error deserves a retry
     ///
     /// The predicate looks at the *typed* error and decides. A rate limit is worth
-    /// waiting out; a bad API key never fixes itself — retrying it three times just
-    /// adds latency to the same failure. Terminal errors surface immediately — this
+    /// waiting out. A bad API key never fixes itself, so retrying it three times just
+    /// adds latency to the same failure. Terminal errors surface immediately, and this
     /// example proves it in the value: a second attempt would return `Ok`, so the
-    /// `Err` in the assertion is evidence no second attempt ever ran.
+    /// `Err` in the assertion is evidence that no second attempt ever ran.
     @Test
     void give_up_immediately_on_terminal_errors() throws InterruptedException {
         var policy = Retry.Policy.fixed(5, Duration.ZERO);
@@ -67,8 +67,8 @@ class RetryDocTest {
 
     /// ## Cap the backoff, spread the herd
     ///
-    /// Uncapped exponential backoff gets silly fast — attempt 10 of a 1-second
-    /// doubling policy sleeps eight and a half minutes. `withMaxDelay` bounds every
+    /// Uncapped exponential backoff gets silly fast: attempt 10 of a 1-second
+    /// doubling policy sleeps for eight and a half minutes. `withMaxDelay` bounds every
     /// delay, and `withJitter` scales each sleep by a random factor so a thousand
     /// clients retrying in lockstep don't hammer the service in waves. The plan
     /// itself stays inspectable: `delayBefore` is pure (jitter applies only at sleep
@@ -87,7 +87,7 @@ class RetryDocTest {
 
     /// ## Exhaustion returns the last error
     ///
-    /// When every attempt fails, you get the most recent `Err` back — a value you
+    /// When every attempt fails, you get the most recent `Err` back: a value you
     /// can log, map, or feed into a fallback, because the failure never stopped
     /// being data.
     @Test

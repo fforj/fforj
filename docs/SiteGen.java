@@ -12,7 +12,7 @@ import java.util.stream.Stream;
 
 /**
  * The fforj documentation site generator. Single file, zero dependencies, run with
- * `java docs/SiteGen.java` (Java 21+) — the same copy-paste-friendly ethos as the
+ * `java docs/SiteGen.java` (Java 21+), the same copy-paste-friendly ethos as the
  * library itself.
  *
  * <p>Content comes from "doc-tests" in src/test/java/dev/fforj/docs/*DocTest.java:
@@ -28,7 +28,7 @@ import java.util.stream.Stream;
  *       order, summary.</li>
  *   <li>A prose line that is exactly `[landing]` flags the next example as the
  *       homepage snippet (the line itself is dropped).</li>
- *   <li>Brace counting ignores string contents only heuristically — don't put
+ *   <li>Brace counting ignores string contents only heuristically, so don't put
  *       unbalanced braces inside string literals in doc-tests.</li>
  * </ul>
  */
@@ -430,7 +430,7 @@ public class SiteGen {
                 <footer class="foot">
                   <p><span class="lig rub">ﬀ</span>orj is MIT-licensed.
                   Every example on this site is a test in the
-                  <a href="https://github.com/fforj/fforj">repository</a> —
+                  <a href="https://github.com/fforj/fforj">repository</a>;
                   the suite ran green before this page was built.</p>
                 </footer>
                 <script>
@@ -490,7 +490,7 @@ public class SiteGen {
                     <p class="sub">Four small types you'd otherwise re-implement in every project:
                     <code>Result</code>, <code>Validated</code>, <code>NonEmptyList</code>,
                     <code>Retry</code>. Java 21+. Zero runtime dependencies. A ligature's worth
-                    of library: two things — functional types and plain Java — set as one glyph.</p>
+                    of library: two things, functional types and plain Java, set as one glyph.</p>
                   </div>
                 </section>
 
@@ -518,7 +518,7 @@ public class SiteGen {
                 """);
         body.append(codeBlock("// Gradle\nimplementation(\"dev.fforj:fforj:" + version + "\")"));
         body.append("""
-                  <p>Or copy the source of the types you need into your project — every class
+                  <p>Or copy the source of the types you need into your project: every class
                   stands alone by design, and behaves identically either way. The
                   <a href="api/index.html">API reference</a> is the full Javadoc.</p>
                 </section>
@@ -526,18 +526,18 @@ public class SiteGen {
                 <section class="ethos">
                   <div class="eyebrow">DELIBERATELY NOT HERE</div>
                   <ul>
-                    <li><strong>No IO monad</strong> — virtual threads removed the practical need;
+                    <li><strong>No IO monad.</strong> Virtual threads removed the practical need;
                     the pure effect tracking that remains costs more than it pays in Java.</li>
-                    <li><strong>No tuples</strong> — records exist.</li>
-                    <li><strong>No collections library</strong> — the stdlib is fine.</li>
-                    <li><strong>No type classes</strong> — Java's type system doesn't want them.</li>
+                    <li><strong>No tuples.</strong> Records exist.</li>
+                    <li><strong>No collections library.</strong> The stdlib is fine.</li>
+                    <li><strong>No type classes.</strong> Java's type system doesn't want them.</li>
                   </ul>
                   <p>The surface area is bounded on purpose. This library will not grow into the
                   thing it replaces.</p>
                 </section>
                 </main>
                 """);
-        return shell("", "index.html", "ﬀorj — functional for Java",
+        return shell("", "index.html", "ﬀorj · functional for Java",
                 "Result, Validated, NonEmptyList, Retry for Java 21+. Zero dependencies.",
                 body.toString());
     }
@@ -557,10 +557,10 @@ public class SiteGen {
         }
         body.append("<p class=\"edit\"><a href=\"https://github.com/fforj/fforj/blob/main/src/test/java/dev/fforj/docs/")
                 .append(article.sourceFile())
-                .append("\">This page is generated from a test file — read or improve it on GitHub.</a></p>\n");
+                .append("\">This page is generated from a test file. Read or improve it on GitHub.</a></p>\n");
         body.append("</main>\n</div>\n");
         return shell("../../", "guides/" + article.slug() + "/index.html",
-                article.title() + " — ﬀorj", article.summary(), body.toString());
+                article.title() + " · ﬀorj", article.summary(), body.toString());
     }
 
     static void copyTree(Path from, Path to) throws IOException {
@@ -583,7 +583,7 @@ public class SiteGen {
 
     // ------------------------------------------------------------------
     // Styles: rubrication on cool paper. Newsreader for prose, JetBrains
-    // Mono (ligatures on — the theme demands it) for code.
+    // Mono (ligatures on, the theme demands it) for code.
     // ------------------------------------------------------------------
 
     static final String CSS = """

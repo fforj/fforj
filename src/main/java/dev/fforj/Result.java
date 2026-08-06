@@ -11,7 +11,7 @@ import java.util.function.Supplier;
 /**
  * Sum type for an operation that either succeeds with a {@code T} or fails with an {@code E}.
  *
- * <p>Compare with Vavr's {@code Either} or {@code Try} — this type discards the implicit
+ * <p>Compare with Vavr's {@code Either} or {@code Try}: this type discards the implicit
  * "left/right" naming convention in favour of explicit {@link Ok} and {@link Err} cases
  * that pattern-match cleanly on Java 21+ {@code switch}.
  *
@@ -26,7 +26,7 @@ import java.util.function.Supplier;
  *
  * <p>The {@code <E, T>} type parameters are carried in both variants even though
  * {@link Err} doesn't use {@code T} and {@link Ok} doesn't use {@code E}. This is the
- * standard Scala / Rust shape for ADTs — the unused parameter survives as a phantom so
+ * standard Scala / Rust shape for ADTs; the unused parameter survives as a phantom so
  * the compiler can prove exhaustiveness in pattern matches without unchecked casts.
  */
 public sealed interface Result<E, T> {
@@ -35,7 +35,7 @@ public sealed interface Result<E, T> {
     record Ok<E, T>(T value) implements Result<E, T> {
         public Ok {
             Objects.requireNonNull(value,
-                    "Ok value must not be null — use Optional<T> for absence");
+                    "Ok value must not be null; use Optional<T> for absence");
         }
     }
 
@@ -67,7 +67,7 @@ public sealed interface Result<E, T> {
      * may throw <em>checked</em> exceptions: this method exists to wrap boundaries that
      * talk to APIs which still throw (legacy stdlib, third-party libraries). The error
      * mapper translates the thrown {@code Throwable} into an {@code E}. {@code attempt}
-     * itself never throws — every {@code Throwable} becomes an {@link Err}.
+     * itself never throws; every {@code Throwable} becomes an {@link Err}.
      *
      * <p><strong>Composing several fallible steps.</strong> When you have a sequence of
      * dependent operations that each throw on failure, prefer one {@code attempt} wrapping
@@ -90,7 +90,7 @@ public sealed interface Result<E, T> {
      *
      * <p><strong>Interruption.</strong> If the body throws {@link InterruptedException},
      * the thread's interrupt status is re-asserted before the exception is mapped to an
-     * {@link Err} — {@code attempt} stays total, but the cooperative-cancellation signal
+     * {@link Err}. {@code attempt} stays total, but the cooperative-cancellation signal
      * is preserved for the surrounding scope ({@code Retry}, a structured-concurrency
      * scope, or any other
      * blocking call further up). Note that {@code Throwable} capture includes
@@ -111,7 +111,7 @@ public sealed interface Result<E, T> {
             return ok(body.call());
         } catch (Halt halt) {
             // Control flow of an enclosing binding/accumulate block, not a failure of the
-            // body — let it unwind to its own boundary.
+            // body, so let it unwind to its own boundary.
             throw halt;
         } catch (InterruptedException ie) {
             // Don't swallow cooperative cancellation: keep attempt total (the caller gets
@@ -127,7 +127,7 @@ public sealed interface Result<E, T> {
      * Lift an {@link Optional} into a {@code Result}: a present value becomes {@link Ok},
      * an empty {@code Optional} becomes {@link Err} carrying {@code ifEmpty.get()}.
      *
-     * <p>The error is caller-supplied because emptiness alone carries no reason — only the
+     * <p>The error is caller-supplied because emptiness alone carries no reason; only the
      * caller knows what an absent value means in their domain. The supplier is evaluated
      * lazily, so no error is built when the value is present. This is the bridge from
      * {@code Optional}-returning APIs (lookups, {@code NonEmptyList.fromList}, etc.) into a
@@ -178,7 +178,7 @@ public sealed interface Result<E, T> {
         }
 
         /**
-         * Assert a condition with no value to bind — a guard, a permission check, an
+         * Assert a condition with no value to bind: a guard, a permission check, an
          * invariant. {@code false} short-circuits the enclosing block with the
          * supplied error, exactly like binding an {@code Err}; {@code true} is a
          * no-op.
@@ -193,7 +193,7 @@ public sealed interface Result<E, T> {
 
     /**
      * Sequence several {@code Result}-returning calls as straight-line code, unwrapping
-     * each success and short-circuiting on the first failure — do-notation for {@code Result}.
+     * each success and short-circuiting on the first failure. Do-notation for {@code Result}.
      *
      * <p>Inside the block you call {@link Binder#on(Result) bind.on(...)} on any
      * {@code Result<E, ?>}; it hands back the raw success value, so you never pattern-match
@@ -222,11 +222,11 @@ public sealed interface Result<E, T> {
      *       {@code bind.on} call inside the block</em> will swallow the short-circuit and
      *       break the abort. Don't wrap bound calls in catch-all handlers.</li>
      *   <li>Steps that throw a genuine exception (rather than returning {@code Err}) are
-     *       <em>not</em> captured here — the throwable propagates out of {@code binding}.
+     *       <em>not</em> captured here; the throwable propagates out of {@code binding}.
      *       Use {@link #attempt(Callable, Function)} for those.</li>
      * </ul>
      * Nested {@code binding} calls are safe; each abort carries the identity of the block
-     * that created it and is caught only by that block's boundary — using an outer binder
+     * that created it and is caught only by that block's boundary, so using an outer binder
      * inside an inner block aborts the outer block, as it should.
      *
      * @param block receives a {@link Binder} and returns the composed success value.
@@ -236,7 +236,7 @@ public sealed interface Result<E, T> {
     static <E, T> Result<E, T> binding(Function<? super Binder<E>, ? extends T> block) {
         Objects.requireNonNull(block, "binding block must not be null");
 
-        // Local subclass so it closes over E — the error rides the exception with no cast.
+        // Local subclass so it closes over E: the error rides the exception with no cast.
         final class Abort extends Halt {
             final E error;
             Abort(Object owner, E error) {
@@ -332,7 +332,7 @@ public sealed interface Result<E, T> {
     }
 
     /**
-     * Observe the success value — logging, metrics — and pass the result through
+     * Observe the success value (logging, metrics) and pass the result through
      * unchanged. The observer runs only on {@link Ok}; it cannot alter the result.
      */
     default Result<E, T> tap(Consumer<? super T> observer) {
@@ -344,7 +344,7 @@ public sealed interface Result<E, T> {
     }
 
     /**
-     * Observe the error — logging, metrics — and pass the result through unchanged.
+     * Observe the error (logging, metrics) and pass the result through unchanged.
      * The observer runs only on {@link Err}; it cannot alter the result.
      */
     default Result<E, T> tapErr(Consumer<? super E> observer) {
@@ -374,7 +374,7 @@ public sealed interface Result<E, T> {
     /** Provide a fallback when this is {@link Err}. The fallback must not be null. */
     default T getOrElse(T fallback) {
         Objects.requireNonNull(fallback,
-                "getOrElse fallback must not be null — use okValue() for absence");
+                "getOrElse fallback must not be null; use okValue() for absence");
         return switch (this) {
             case Ok<E, T> ok -> ok.value();
             case Err<E, T> ignored -> fallback;

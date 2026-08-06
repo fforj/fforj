@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /// ---
-/// title: NonEmptyList — emptiness, unrepresentable
+/// title: NonEmptyList: emptiness, unrepresentable
 /// slug: nonemptylist
 /// order: 3
 /// summary: A list the compiler knows has at least one element, so head() is total.
@@ -22,14 +22,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /// construct: it's a `head` plus a `tail`, so `head()` always succeeds and `size()`
 /// is always at least one. This is
 /// [parse, don't validate](https://lexi-lambda.github.io/blog/2019/11/05/parse-don-t-validate/)
-/// applied to collections — and it's the foundation `Validated` stands on, which is
+/// applied to collections. It is also the foundation `Validated` stands on, which is
 /// why an `Invalid` can never carry zero errors.
 class NonEmptyListDocTest {
 
     /// ## The parser is the boundary
     ///
     /// `fromList` is the only door in from a possibly-empty world, and it returns
-    /// `Optional` — absence, not failure, because only the caller knows what an empty
+    /// `Optional`: absence, not failure, because only the caller knows what an empty
     /// input means in their domain. Past that door, the guarantee holds everywhere
     /// the value flows.
     @Test
@@ -44,8 +44,8 @@ class NonEmptyListDocTest {
 
     /// ## Operations preserve the guarantee
     ///
-    /// `map`, `append`, and `concat` all return `NonEmptyList` — non-emptiness
-    /// survives by construction, so downstream code keeps the proof without
+    /// `map`, `append`, and `concat` all return `NonEmptyList`, so non-emptiness
+    /// survives by construction and downstream code keeps the proof without
     /// re-checking anything.
     @Test
     void transform_without_losing_non_emptiness() {

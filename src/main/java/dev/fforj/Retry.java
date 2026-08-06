@@ -10,7 +10,7 @@ import java.util.function.Supplier;
 /**
  * Retry policies for fallible operations.
  *
- * <p>Designed to be called from a virtual-thread context — {@link Thread#sleep(Duration)}
+ * <p>Designed to be called from a virtual-thread context: {@link Thread#sleep(Duration)}
  * is safe and cheap on virtual threads; no executor / scheduled task overhead.
  *
  * <p>Cancellation is structural: if the calling thread is interrupted (e.g. because a
@@ -27,14 +27,14 @@ public final class Retry {
      * @param maxAttempts    total attempts including the first call. {@code 1} = no retry.
      * @param initialDelay   delay before the first retry.
      * @param backoffFactor  delay multiplier between attempts. {@code 1.0} = fixed delay.
-     * @param maxDelay       upper bound on any single delay after backoff — uncapped
+     * @param maxDelay       upper bound on any single delay after backoff; uncapped
      *                       exponential backoff gets silly fast. The three-argument
      *                       constructor defaults it to effectively unbounded.
      * @param jitter         fraction in {@code [0, 1)}: each sleep is scaled by a
      *                       uniform random factor in {@code [1 - jitter, 1 + jitter]}
      *                       to spread synchronized clients ("thundering herds").
-     *                       {@code 0} (the default) means fully deterministic delays —
-     *                       keep it {@code 0} in tests.
+     *                       {@code 0} (the default) means fully deterministic delays.
+     *                       Keep it {@code 0} in tests.
      */
     public record Policy(int maxAttempts, Duration initialDelay, double backoffFactor,
                          Duration maxDelay, double jitter) {
@@ -62,7 +62,7 @@ public final class Retry {
             }
         }
 
-        /** Uncapped, jitter-free policy — the common starting point. */
+        /** Uncapped, jitter-free policy; the common starting point. */
         public Policy(int maxAttempts, Duration initialDelay, double backoffFactor) {
             this(maxAttempts, initialDelay, backoffFactor, UNBOUNDED, 0.0);
         }
@@ -90,8 +90,8 @@ public final class Retry {
         /**
          * The planned delay before the given attempt (the first retry is attempt
          * {@code 2}): {@code initialDelay} scaled by {@code backoffFactor} once per
-         * prior retry, capped at {@code maxDelay}. Pure and deterministic — jitter is
-         * applied at sleep time by {@link Retry#run}, never here — so retry timing can
+         * prior retry, capped at {@code maxDelay}. Pure and deterministic (jitter is
+         * applied at sleep time by {@link Retry#run}, never here), so retry timing can
          * be asserted in tests without sleeping through it.
          */
         public Duration delayBefore(int attempt) {
@@ -108,8 +108,8 @@ public final class Retry {
      * Run {@code body} up to {@link Policy#maxAttempts} times until it succeeds, the
      * error fails the {@code shouldRetry} predicate, or the caller's thread is interrupted.
      *
-     * <p>The body receives the current <em>attempt number</em>, starting at {@code 1} —
-     * the retry loop owns that counter, so callers never track it in outside mutable
+     * <p>The body receives the current <em>attempt number</em>, starting at {@code 1}.
+     * The retry loop owns that counter, so callers never track it in outside mutable
      * state. Use it for logging ("attempt 3 of 5 failed"), attempt-dependent behavior,
      * or building it into the success value. When the number doesn't matter, use the
      * {@link #run(Policy, Predicate, Supplier) Supplier overload}.

@@ -1,27 +1,27 @@
-# ﬀorj — functional for Java
+# ﬀorj: functional for Java
 
 [![CI](https://github.com/fforj/fforj/actions/workflows/ci.yml/badge.svg)](https://github.com/fforj/fforj/actions/workflows/ci.yml)
 [![Maven Central](https://img.shields.io/maven-central/v/dev.fforj/fforj)](https://central.sonatype.com/artifact/dev.fforj/fforj)
 
 Java 21+ FP essentials, no nonsense: four small types you'd otherwise re-implement
-in every project. Zero runtime dependencies. Stdlib only. Nothing preview-flagged —
+in every project. Zero runtime dependencies. Stdlib only. Nothing preview-flagged:
 every class loads on any JDK from 21 up.
 
-**Docs: [fforj.dev](https://fforj.dev)** — guides and Javadoc. Every example there
+**Docs: [fforj.dev](https://fforj.dev)**, guides and full Javadoc. Every example there
 is a test in this repo ([`src/test/java/dev/fforj/docs`](src/test/java/dev/fforj/docs)),
 so the docs can't drift from the code.
 
 ## The name
 
-**ﬀorj** is **f**unctional **for** **J**ava — and the `ff` is one character, not
+**ﬀorj** is **f**unctional **for** **J**ava, and the `ff` is one character, not
 two: ﬀ, U+FB00, the double-f ligature. A ligature is what a typesetter reaches for
 when two letters compose better as a single glyph than side by side. That's the
 whole design goal, in one character: functional types and plain Java, fused,
 nothing added.
 
-(Everywhere machines read the name — the Maven artifact, the `dev.fforj` package,
-the GitHub org — it's spelled with two plain `f`s, because build tools have no
-taste for typography.)
+(Everywhere machines read the name, like the Maven artifact, the `dev.fforj`
+package, and the GitHub org, it's spelled with two plain `f`s, because build
+tools have no taste for typography.)
 
 ## Why
 
@@ -39,8 +39,8 @@ taste for typography.)
 | `NonEmptyList<T>` | A list the compiler knows is non-empty. | Foundation for `Validated`; also useful for domain "must have at least one" invariants. |
 | `Retry` | Backoff loop that respects `Predicate<E>` for retryability. | The wrapper around any flaky call, virtual-thread safe. |
 
-A fifth type, `Scopes` — parallel fan-out and races over `StructuredTaskScope` that
-return `Validated`/`Result` directly — is **shelved on the
+A fifth type, `Scopes` (parallel fan-out and races over `StructuredTaskScope` that
+return `Validated`/`Result` directly), is **shelved on the
 [`poc/scopes-jep505`](../../tree/poc/scopes-jep505) branch** until structured
 concurrency (JEP 505) finalizes. It was built and tested against the Java 25
 preview API; shipping a preview-flagged class would break the "keeps working
@@ -62,7 +62,7 @@ Three tools, by the shape of your steps:
   short-circuiting).
 
 ```java
-// AppError is your own domain error type — the library never prescribes one.
+// AppError is your own domain error type; the library never prescribes one.
 Validated<AppError, Form> form = Validated.accumulate(acc -> {
     var name  = acc.on(validateName(raw));    // Invalid -> recorded, keeps going
     var email = acc.on(validateEmail(raw));   // still runs
@@ -87,7 +87,7 @@ Bridges: `Result.fromOptional(opt, ifEmpty)` lifts an `Optional` in; `result.okV
 ### Parse, don't validate
 
 The intended way to use all of the above (after [Alexis King's essay][pdv]): don't
-*check* a property and throw the evidence away — *parse* the input into a type that
+*check* a property and throw the evidence away. *Parse* the input into a type that
 makes the property unrepresentable, once, at the boundary.
 
 ```java
@@ -108,20 +108,20 @@ Validated<AppError, Registration> reg = Validated.accumulate(acc -> {
 });
 ```
 
-Downstream code takes `Registration`, never re-checks anything, and has no error path —
-the proof lives in the type. `NonEmptyList` is the canonical case: `fromList` is the
+Downstream code takes `Registration`, never re-checks anything, and has no error
+path; the proof lives in the type. `NonEmptyList` is the canonical case: `fromList` is the
 parser, and `head()` is total because emptiness is unrepresentable.
 
 [pdv]: https://lexi-lambda.github.io/blog/2019/11/05/parse-don-t-validate/
 
 ## What is *not* here
 
-- **No `IO` monad.** Not because virtual threads make one pointless — an `IO` type
+- **No `IO` monad.** Not because virtual threads make one pointless: an `IO` type
   also buys referential transparency and effects-as-values (compose, retry, race a
   description before running it), which no thread model provides. But the dominant
-  *practical* reason JVM code reached for `IO` — cheap, cancellable, composable
-  concurrency without blocking platform threads — is now in the language itself:
-  virtual threads plus structured concurrency. What remains of the pitch is pure
+  *practical* reason JVM code reached for `IO` was cheap, cancellable, composable
+  concurrency without blocking platform threads, and that now lives in the language
+  itself: virtual threads plus structured concurrency. What remains of the pitch is pure
   effect tracking, and in Java that costs more than it pays: it colors every API it
   touches and can't be expressed well without higher-kinded types. fforj's lane is
   errors-as-values (`Result`), leaving effects to the runtime.
@@ -154,8 +154,8 @@ dependencies {
 The version above is kept current automatically: the release workflow rewrites it
 on every release.
 
-Or don't: every class stands alone by design — copying the source of the types you
-need into your own project (package renamed) gives you the exact same behavior.
+Or don't: every class stands alone by design, so copying the source of the types
+you need into your own project (package renamed) gives you the exact same behavior.
 That's not a workaround, it's a supported way to consume the library.
 
 ## Requirements
@@ -169,7 +169,7 @@ That's not a workaround, it's a supported way to consume the library.
 ./gradlew test
 ```
 
-Releases are tag-driven (`git push origin vX.Y.Z` publishes to Maven Central) —
+Releases are tag-driven (`git push origin vX.Y.Z` publishes to Maven Central);
 see [RELEASING.md](RELEASING.md).
 
 ## License

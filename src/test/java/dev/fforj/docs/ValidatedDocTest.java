@@ -11,13 +11,14 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /// ---
-/// title: Validated — every error, at once
+/// title: Validated: every error, at once
 /// slug: validated
 /// order: 2
 /// summary: Like Result, but Invalid accumulates all errors instead of stopping at the first.
 /// ---
 ///
-/// `Result` stops at the first failure — right for dependent steps, wrong for forms.
+/// `Result` stops at the first failure. That is right for dependent steps and wrong
+/// for forms.
 /// When a user submits three broken fields, telling them about one is a bad product.
 /// `Validated<E, T>` accumulates: its `Invalid` case carries a `NonEmptyList<E>` of
 /// everything that went wrong.
@@ -43,8 +44,8 @@ class ValidatedDocTest {
     /// ## Two fields: `zip`
     ///
     /// `zip` combines two independent validations. If both are valid it applies the
-    /// function; if either failed, the errors propagate — and if *both* failed, the
-    /// errors concatenate. Nothing is dropped.
+    /// function; if either failed, the errors propagate; if *both* failed, the errors
+    /// concatenate. Nothing is dropped.
     @Test
     void combine_two_validations_and_keep_both_errors() {
         Validated<String, String> greeting =
@@ -62,8 +63,8 @@ class ValidatedDocTest {
     ///
     /// [landing]
     /// Past two fields, chained `zip`s turn into currying gymnastics. `accumulate`
-    /// is the arity-free form: bind each validation with `acc.on(...)` — a failure is
-    /// recorded but *doesn't* stop later validations from running — then unwrap with
+    /// is the arity-free form. Bind each validation with `acc.on(...)`, which records a
+    /// failure without stopping later validations from running, then unwrap with
     /// `.value()` at the end. The result is `Valid` only if nothing failed, otherwise
     /// `Invalid` with every error in binding order.
     @Test
@@ -85,7 +86,7 @@ class ValidatedDocTest {
     /// ## Mix in Result and Optional
     ///
     /// Real validation pipelines aren't uniform: some steps return `Result`, some
-    /// return `Optional`. The accumulator binds all three shapes side by side — a
+    /// return `Optional`. The accumulator binds all three shapes side by side: a
     /// `Result.Err` accumulates as a single error, and an empty `Optional` accumulates
     /// the error you name for it.
     @Test
@@ -122,11 +123,11 @@ class ValidatedDocTest {
 
     /// ## Whole collections: `onEach`
     ///
-    /// Accumulation earns its keep most when the input is a *collection* — reject a
+    /// Accumulation earns its keep most when the input is a *collection*. Reject a
     /// CSV import row by row and your users will resubmit all day. `acc.onEach` binds
     /// a validation of every element: each failing element contributes its error, and
     /// the bound value is the fully-parsed list. (Outside the DSL, the same operation
-    /// is `Validated.traverse` — with an overload that takes a `NonEmptyList` and
+    /// is `Validated.traverse`, with an overload that takes a `NonEmptyList` and
     /// gives one back.)
     @Test
     void validate_every_element_and_report_every_bad_one() {
@@ -142,7 +143,7 @@ class ValidatedDocTest {
 
     /// ## Rules without values: `ensure`
     ///
-    /// Some validations have no value to bind — a limit, a cross-field rule, a
+    /// Some validations have no value to bind: a limit, a cross-field rule, a
     /// permission. `acc.ensure` reads like an assertion but accumulates like
     /// everything else: a false condition records the error and the block keeps
     /// running, so later checks still contribute theirs.
@@ -167,7 +168,7 @@ class ValidatedDocTest {
     /// ## Translate the whole batch: `mapErr`
     ///
     /// Domain errors rarely leave the system as-is. `mapErr` transforms every error
-    /// in the batch at once — the accumulating counterpart of `Result.mapErr` — so
+    /// in the batch at once (it is the accumulating counterpart of `Result.mapErr`), so
     /// the boundary can speak API while the core keeps speaking domain:
     @Test
     void the_error_batch_translates_without_losing_anything() {

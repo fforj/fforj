@@ -48,7 +48,7 @@ public record NonEmptyList<T>(T head, List<T> tail) implements Iterable<T> {
     }
 
     /**
-     * Try to lift a {@link List}. Returns empty if the list itself is empty — absence,
+     * Try to lift a {@link List}. Returns empty if the list itself is empty: absence,
      * not failure; use {@code Result.fromOptional} to attach a domain error if needed.
      */
     public static <T> Optional<NonEmptyList<T>> fromList(List<? extends T> list) {
