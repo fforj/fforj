@@ -11,6 +11,7 @@ import java.net.SocketTimeoutException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -45,6 +46,7 @@ class CombinedDocTest {
         record BadEmail(String raw) implements OrderError {}
         record NoItems() implements OrderError {}
         record BadSku(String raw) implements OrderError {}
+        record TooManyItems(int count) implements OrderError {}
         record UnknownCountry(String raw) implements OrderError {}
         record OutOfStock(Sku sku) implements OrderError {}
         record GatewayTimeout() implements OrderError {}          // transient — worth retrying
@@ -126,14 +128,22 @@ class CombinedDocTest {
     }
 
     /// Field validations are independent, so a failure in one must not hide a failure
-    /// in another. `accumulate` binds the three doors, and the final line assembles
-    /// the domain from already-proven parts:
+    /// in another. `accumulate` binds the three doors — and then `ensure` joins the
+    /// one rule that fits no type: an order-size limit is *policy*, not shape, so it
+    /// doesn't belong in a wall. A false condition records its error and the block
+    /// keeps running, like every other binding. The final line assembles the domain
+    /// from already-proven parts:
+    // site:include
+    static final int MAX_ITEMS = 10;
+
     // site:include
     static Validated<OrderError, Order> parse(RawOrder raw) {
         return Validated.accumulate(acc -> {
             var email = acc.on(Email.parse(raw.email()));
             var items = acc.on(parseItems(raw.skus()));
             var country = acc.on(Country.parse(raw.country()));
+            acc.ensure(raw.skus().size() <= MAX_ITEMS,
+                    () -> new OrderError.TooManyItems(raw.skus().size()));
             return new Order(email.value(), items.value(), country.value());
         });
     }
@@ -147,6 +157,20 @@ class CombinedDocTest {
                         new OrderError.BadEmail("not-an-email"),
                         new OrderError.NoItems(),
                         new OrderError.UnknownCountry("XX"))),
+                parse(raw));
+    }
+
+    /// A failed guard accumulates with everything else — the oversized order still
+    /// gets its other problems reported in the same response:
+    @Test
+    void a_guard_failure_accumulates_with_everything_else() {
+        var elevenSkus = IntStream.rangeClosed(1, 11).mapToObj(i -> "SKU-" + i).toList();
+        var raw = new RawOrder("not-an-email", elevenSkus, "RO");
+
+        assertEquals(
+                Validated.invalid(NonEmptyList.of(
+                        new OrderError.BadEmail("not-an-email"),
+                        new OrderError.TooManyItems(11))),
                 parse(raw));
     }
 
