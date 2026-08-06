@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NonEmptyList: emptiness, unrepresentable · ﬀorj</title>
+<meta name="description" content="A list the compiler knows has at least one element, so head() is total.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22 font-family=%22Georgia,serif%22 fill=%22%23C0341D%22>ﬀ</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <a class="wordmark" href="../../index.html"><span class="lig">ﬀ</span>orj</a>
+    <select id="vsel" aria-label="Documentation version"
+            data-prefix="next/" data-page="guides/nonemptylist/index.html"><option>main</option></select>
+  </div>
+  <nav>
+    <a href="../../index.html#guides">Guides</a>
+    <a href="../../api/index.html">API</a>
+    <a href="https://github.com/fforj/fforj">GitHub</a>
+  </nav>
+</header>
+<div class="layout">
+<aside class="sidenav">
+<div class="eyebrow">GUIDES</div>
+<ul>
+<li><a href="../result/index.html">Result: errors as values</a></li>
+<li><a href="../validated/index.html">Validated: every error, at once</a></li>
+<li class="here"><a href="../nonemptylist/index.html">NonEmptyList: emptiness, unrepresentable</a></li>
+<li><a href="../retry/index.html">Retry: backoff without a framework</a></li>
+<li><a href="../order/index.html">Putting it together: an order, end to end</a></li>
+</ul>
+</aside>
+<main class="article">
+<h1>NonEmptyList: emptiness, unrepresentable</h1>
+<p>Half the defensive code in a codebase guards against collections that "shouldn't" be empty. <code>NonEmptyList&lt;T&gt;</code> deletes that code by making emptiness impossible to construct: it's a <code>head</code> plus a <code>tail</code>, so <code>head()</code> always succeeds and <code>size()</code> is always at least one. This is <a href="https://lexi-lambda.github.io/blog/2019/11/05/parse-don-t-validate/">parse, don't validate</a> applied to collections. It is also the foundation <code>Validated</code> stands on, which is why an <code>Invalid</code> can never carry zero errors.</p>
+<h2 id="the-parser-is-the-boundary">The parser is the boundary</h2>
+<p><code>fromList</code> is the only door in from a possibly-empty world, and it returns <code>Optional</code>: absence, not failure, because only the caller knows what an empty input means in their domain. Past that door, the guarantee holds everywhere the value flows.</p>
+<pre class="code"><code>Optional&lt;NonEmptyList&lt;String&gt;&gt; owners = NonEmptyList.fromList(List.of(<span class="c-str">"ada"</span>, <span class="c-str">"grace"</span>));
+Optional&lt;NonEmptyList&lt;String&gt;&gt; nobody = NonEmptyList.fromList(List.of());
+
+assertTrue(owners.isPresent());
+assertEquals(<span class="c-str">"ada"</span>, owners.get().head());   <span class="c-com">// total: no isEmpty() check, ever</span>
+assertTrue(nobody.isEmpty());</code></pre>
+<h2 id="operations-preserve-the-guarantee">Operations preserve the guarantee</h2>
+<p><code>map</code>, <code>append</code>, and <code>concat</code> all return <code>NonEmptyList</code>, so non-emptiness survives by construction and downstream code keeps the proof without re-checking anything.</p>
+<pre class="code"><code>NonEmptyList&lt;Integer&gt; counts = NonEmptyList.of(1, 2, 3).map(n -&gt; n * 10);
+assertEquals(List.of(10, 20, 30), counts.toList());
+
+NonEmptyList&lt;Integer&gt; more = counts.append(40).concat(NonEmptyList.of(50));
+assertEquals(5, more.size());
+assertEquals(10, more.head());</code></pre>
+<h2 id="it-iterates-and-it-can-t-be-mutated">It iterates, and it can't be mutated</h2>
+<p><code>NonEmptyList</code> is <code>Iterable</code> (head first), and it defends its invariant: the list you build it from is defensively copied, so no one holding the original reference can empty it out from under you.</p>
+<pre class="code"><code><span class="c-kw">var</span> source = <span class="c-kw">new</span> ArrayList&lt;&gt;(List.of(<span class="c-str">"keep"</span>, <span class="c-str">"these"</span>));
+<span class="c-kw">var</span> nel = NonEmptyList.fromList(source).orElseThrow();
+
+source.clear();                          <span class="c-com">// mutate the original all you like</span>
+
+<span class="c-kw">var</span> seen = <span class="c-kw">new</span> ArrayList&lt;String&gt;();
+<span class="c-kw">for</span> (String s : nel) {
+    seen.add(s);
+}
+assertEquals(List.of(<span class="c-str">"keep"</span>, <span class="c-str">"these"</span>), seen);</code></pre>
+<p class="edit"><a href="https://github.com/fforj/fforj/blob/main/src/test/java/dev/fforj/docs/NonEmptyListDocTest.java">This page is generated from a test file. Read or improve it on GitHub.</a></p>
+</main>
+</div>
+
+<footer class="foot">
+  <p><span class="lig rub">ﬀ</span>orj is MIT-licensed.
+  Every example on this site is a test in the
+  <a href="https://github.com/fforj/fforj">repository</a>;
+  the suite ran green before this page was built.</p>
+</footer>
+<script>
+(function () {
+  var sel = document.getElementById("vsel");
+  var prefix = sel.dataset.prefix, page = sel.dataset.page;
+  var path = location.pathname;
+  // Site root = current path minus this build's prefix and page path,
+  // tolerating servers that serve directories without "index.html".
+  var root = null;
+  var suffix = prefix + page;
+  if (path.endsWith(suffix)) {
+    root = path.slice(0, path.length - suffix.length);
+  } else if (suffix.endsWith("index.html")) {
+    var dir = suffix.slice(0, suffix.length - "index.html".length);
+    if (path.endsWith(dir)) root = path.slice(0, path.length - dir.length);
+  }
+  if (root === null) return;
+  fetch(root + "versions.json").then(function (r) { return r.json(); })
+    .then(function (v) {
+      sel.innerHTML = "";
+      v.entries.forEach(function (e) {
+        var o = document.createElement("option");
+        o.value = e.path;
+        o.textContent = e.label;
+        if (e.path === prefix) o.selected = true;
+        sel.appendChild(o);
+      });
+      sel.onchange = function () {
+        var target = root + sel.value + page;
+        // Same page may not exist in the chosen version; fall back to
+        // that version's landing page.
+        fetch(target, { method: "HEAD" })
+          .then(function (r) { location.href = r.ok ? target : root + sel.value; })
+          .catch(function () { location.href = root + sel.value; });
+      };
+    }).catch(function () {});
+})();
+</script>
+</body>
+</html>

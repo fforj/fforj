@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ﬀorj · functional for Java</title>
+<meta name="description" content="Result, Validated, NonEmptyList, Retry for Java 21+. Zero dependencies.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22 font-family=%22Georgia,serif%22 fill=%22%23C0341D%22>ﬀ</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <a class="wordmark" href="index.html"><span class="lig">ﬀ</span>orj</a>
+    <select id="vsel" aria-label="Documentation version"
+            data-prefix="v/0.2.0/" data-page="index.html"><option>0.2.0</option></select>
+  </div>
+  <nav>
+    <a href="index.html#guides">Guides</a>
+    <a href="api/index.html">API</a>
+    <a href="https://github.com/fforj/fforj">GitHub</a>
+  </nav>
+</header>
+<main class="landing">
+<section class="hero">
+  <div class="specimen">
+    <div class="glyph">ﬀ</div>
+    <div class="caption">U+FB00 &middot; LATIN SMALL LIGATURE FF</div>
+  </div>
+  <div class="thesis">
+    <h1><span class="rub">f</span>unctional <span class="rub">f</span>or Java</h1>
+    <p class="sub">Four small types you'd otherwise re-implement in every project:
+    <code>Result</code>, <code>Validated</code>, <code>NonEmptyList</code>,
+    <code>Retry</code>. Java 21+. Zero runtime dependencies. A ligature's worth
+    of library: two things, functional types and plain Java, set as one glyph.</p>
+  </div>
+</section>
+
+<section class="proof">
+  <div class="eyebrow">PROVEN, NOT PROMISED</div>
+  <p>This example is a test. It ran, and passed, before this page was built:</p>
+<pre class="code"><code>Validated&lt;String, Form&gt; form = Validated.accumulate(acc -&gt; {
+    <span class="c-kw">var</span> name = acc.on(nonBlank(<span class="c-str">"name"</span>, <span class="c-str">""</span>));
+    <span class="c-kw">var</span> email = acc.on(nonBlank(<span class="c-str">"email"</span>, <span class="c-str">"ada@analytical.engine"</span>));
+    <span class="c-kw">var</span> age = acc.on(validAge(-3));
+    <span class="c-kw">return</span> <span class="c-kw">new</span> Form(name.value(), email.value(), age.value());
+});
+
+assertEquals(
+        Validated.invalid(NonEmptyList.of(
+                <span class="c-str">"name must not be blank"</span>,
+                <span class="c-str">"age must be positive, was -3"</span>)),
+        form);</code></pre>
+<p class="more"><a href="guides/validated/index.html">Read the Validated: every error, at once guide &rarr;</a></p>
+</section>
+<section id="guides" class="guides">
+<div class="eyebrow">GUIDES</div>
+<div class="cards">
+<a class="card" href="guides/result/index.html"><h3>Result: errors as values</h3><p>A sealed Ok | Err sum type. Pattern-match failures instead of throwing them.</p></a>
+<a class="card" href="guides/validated/index.html"><h3>Validated: every error, at once</h3><p>Like Result, but Invalid accumulates all errors instead of stopping at the first.</p></a>
+<a class="card" href="guides/nonemptylist/index.html"><h3>NonEmptyList: emptiness, unrepresentable</h3><p>A list the compiler knows has at least one element, so head() is total.</p></a>
+<a class="card" href="guides/retry/index.html"><h3>Retry: backoff without a framework</h3><p>A policy-driven retry loop over Result, built for virtual threads.</p></a>
+<a class="card" href="guides/order/index.html"><h3>Putting it together: an order, end to end</h3><p>Result, Validated, and NonEmptyList meeting in one pipeline, raw input to response.</p></a>
+</div>
+</section>
+<section class="install">
+  <div class="eyebrow">GET IT</div>
+<pre class="code"><code><span class="c-com">// Gradle</span>
+implementation(<span class="c-str">"dev.fforj:fforj:0.2.0"</span>)</code></pre>
+  <p>Or copy the source of the types you need into your project: every class
+  stands alone by design, and behaves identically either way. The
+  <a href="api/index.html">API reference</a> is the full Javadoc.</p>
+</section>
+
+<section class="ethos">
+  <div class="eyebrow">DELIBERATELY NOT HERE</div>
+  <ul>
+    <li><strong>No IO monad.</strong> Virtual threads removed the practical need;
+    the pure effect tracking that remains costs more than it pays in Java.</li>
+    <li><strong>No tuples.</strong> Records exist.</li>
+    <li><strong>No collections library.</strong> The stdlib is fine.</li>
+    <li><strong>No type classes.</strong> Java's type system doesn't want them.</li>
+  </ul>
+  <p>The surface area is bounded on purpose. This library will not grow into the
+  thing it replaces.</p>
+</section>
+</main>
+
+<footer class="foot">
+  <p><span class="lig rub">ﬀ</span>orj is MIT-licensed.
+  Every example on this site is a test in the
+  <a href="https://github.com/fforj/fforj">repository</a>;
+  the suite ran green before this page was built.</p>
+</footer>
+<script>
+(function () {
+  var sel = document.getElementById("vsel");
+  var prefix = sel.dataset.prefix, page = sel.dataset.page;
+  var path = location.pathname;
+  // Site root = current path minus this build's prefix and page path,
+  // tolerating servers that serve directories without "index.html".
+  var root = null;
+  var suffix = prefix + page;
+  if (path.endsWith(suffix)) {
+    root = path.slice(0, path.length - suffix.length);
+  } else if (suffix.endsWith("index.html")) {
+    var dir = suffix.slice(0, suffix.length - "index.html".length);
+    if (path.endsWith(dir)) root = path.slice(0, path.length - dir.length);
+  }
+  if (root === null) return;
+  fetch(root + "versions.json").then(function (r) { return r.json(); })
+    .then(function (v) {
+      sel.innerHTML = "";
+      v.entries.forEach(function (e) {
+        var o = document.createElement("option");
+        o.value = e.path;
+        o.textContent = e.label;
+        if (e.path === prefix) o.selected = true;
+        sel.appendChild(o);
+      });
+      sel.onchange = function () {
+        var target = root + sel.value + page;
+        // Same page may not exist in the chosen version; fall back to
+        // that version's landing page.
+        fetch(target, { method: "HEAD" })
+          .then(function (r) { location.href = r.ok ? target : root + sel.value; })
+          .catch(function () { location.href = root + sel.value; });
+      };
+    }).catch(function () {});
+})();
+</script>
+</body>
+</html>
