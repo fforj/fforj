@@ -1,0 +1,1 @@
+tagSearchIndex = [{"l":"How it short-circuits, and the one caveat","h":"dev.fforj.Result.binding(Function)","k":"16","u":"dev/fforj/Result.html#how-it-short-circuits-and-the-one-caveat-heading"}];updateSearchResults();
