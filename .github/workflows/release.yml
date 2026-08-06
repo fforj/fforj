@@ -8,13 +8,18 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write # gh release create
+  contents: write # gh release create, gh-pages publish, README version bump
+
+concurrency:
+  group: site # shared with site.yml — queue site publishes, don't race
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags needed for versions.json
 
       - uses: actions/setup-java@v4
         with:
@@ -43,3 +48,54 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+
+      # ----- documentation site (ADR-5): root = this release, /v/X.Y.Z/ = frozen -----
+
+      - name: Build release site
+        run: |
+          ./gradlew javadoc
+          java docs/SiteGen.java --version "$VERSION" --prefix "" --channel "$VERSION" \
+            --javadoc build/docs/javadoc --out out-root
+          java docs/SiteGen.java --version "$VERSION" --prefix "v/$VERSION/" --channel "$VERSION" \
+            --javadoc build/docs/javadoc --out out-v
+
+      - uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: pages
+
+      - name: Publish site (replace root, add frozen /v/)
+        run: |
+          find pages -mindepth 1 -maxdepth 1 ! -name v ! -name next ! -name .git -exec rm -rf {} +
+          cp -R out-root/. pages/
+          mkdir -p pages/v
+          rm -rf "pages/v/$VERSION"
+          cp -R out-v "pages/v/$VERSION"
+          latest=$(git tag -l 'v*' | sort -V | tail -1 | sed 's/^v//')
+          {
+            printf '{"latest":"%s","entries":[{"label":"%s (latest)","path":""}' "$latest" "$latest"
+            for t in $(git tag -l 'v*' | sort -Vr | sed 's/^v//'); do
+              printf ',{"label":"%s","path":"v/%s/"}' "$t" "$t"
+            done
+            printf ',{"label":"main (unreleased)","path":"next/"}]}\n'
+          } > pages/versions.json
+          echo "fforj.dev" > pages/CNAME
+          cd pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit --amend -m "site: release $VERSION"
+          git push --force
+
+      - name: Point README install snippets at the released version
+        run: |
+          git fetch origin main
+          git checkout -B main origin/main
+          sed -i -E "s|dev\.fforj:fforj:[0-9][^\"]*|dev.fforj:fforj:${VERSION}|g; s|<version>[^<]*</version>|<version>${VERSION}</version>|g" README.md
+          if ! git diff --quiet README.md; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add README.md
+            git commit -m "chore: point README install snippets at ${VERSION}"
+            git push origin main
+          fi

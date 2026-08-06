@@ -29,7 +29,7 @@ Org: [github.com/fforj](https://github.com/fforj). Website: `fforj.dev`.
 | Package root | `dev.fforj` | Reverse-domain convention from `fforj.dev` |
 | Group ID | `dev.fforj` | Same; for Maven Central publishing |
 | Artifact ID (default) | `fforj` | When we publish |
-| IO monad | **NO.** Virtual threads + `StructuredTaskScope` replace it. | The reason `IO` exists in TS/Haskell does not apply to Java 21+. Adding it here would burn the JVM's strength. |
+| IO monad | **NO.** Errors are values (`Result`); effects stay on the runtime. | Virtual threads + structured concurrency cover `IO`'s practical draw (cheap cancellable concurrency); the rest — pure effect tracking — costs more than it pays in Java: colored APIs, no HKTs. See ADR-0 addendum (2026-08-06). |
 | Tuples | **NO.** Use records. | Records eliminate the reason `Tuple1..8` ever existed in Vavr. |
 | Functional collections | **NO.** Use stdlib `List.copyOf`, `Stream`, `Map.copyOf`. | The stdlib is fine. Reimplementing it is the Vavr trap. |
 | Type classes / HKTs | **NO.** | Java's type system doesn't support them; emulating them produces hostile code. |

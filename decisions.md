@@ -83,6 +83,24 @@ remaining preview features finalize.
 - `build.gradle.kts`, `settings.gradle.kts`, `gradle/wrapper/`
 - `README.md`, `.gitignore`
 
+### Addendum (2026-08-06): sharpen the "no IO monad" rationale
+
+External feedback, and it is correct: virtual threads are not *equivalent* to an
+`IO` type. `IO` also provides referential transparency, effects as first-class
+values (compose, retry, or race a description of an effect before running it),
+and deferred execution — no thread model provides those. The original wording
+here ("solve the problem `IO` was invented to solve") overclaimed.
+
+The decision stands on the honest version of the argument: (1) the dominant
+practical reason JVM code adopted `IO` — cheap, cancellable, composable
+concurrency without blocking platform threads — is now provided by the platform
+itself (virtual threads + structured concurrency); (2) the remaining benefit,
+pure effect tracking, has a cost profile specific to Java — it colors every API
+boundary it touches, cannot be expressed well without HKTs (a locked NO), and
+splits a codebase into two dialects. fforj's lane is errors-as-values, not
+effects-as-values. Wording corrected in README, CLAUDE.md, and the site's
+"deliberately not here" section; this addendum is the record.
+
 ---
 
 ## ADR-1 (2026-06-05): `Result.binding` — do-notation for sequencing `Result`
@@ -569,3 +587,31 @@ tests→website direction for Java is an open niche.
 - `src/test/java/dev/fforj/docs/{Result,Validated,NonEmptyList,Retry}DocTest.java` — new.
 - `docs/SiteGen.java` — new. `build.gradle.kts` — `site` task.
 - `.github/workflows/site.yml` — new. `CLAUDE.md`, `README.md` — pointers.
+
+### Addendum (2026-08-06): versioned site + auto-maintained install version
+
+Extends ADR-5 with versioning (requested so example diffs between releases are
+visible):
+
+- **Layout**: site root = latest release's docs; `/v/X.Y.Z/` = frozen snapshot
+  per release, generated from that tag's own doc-tests (so version differences in
+  examples are real, tested behavioral differences); `/next/` = main, unreleased.
+- **Selector**: every page's header has a version dropdown populated at page-load
+  from the single live `/versions.json` — frozen snapshots therefore list
+  versions released *after* them. Navigation lands on the same page in the chosen
+  version, falling back to that version's landing page if it doesn't exist there.
+- **Hosting**: the `gh-pages` branch of `fforj/fforj` (Pages "legacy" branch
+  serving, CNAME `fforj.dev`). Considered a dedicated site repo; rejected for
+  now: the branch is pure build output, and every deploy **amends the single
+  existing commit and force-pushes**, so the library repo's clone size never
+  grows — which removes the main argument for a separate repo while keeping
+  same-repo `GITHUB_TOKEN` deploys (no cross-repo PAT). Revisit if the org gains
+  more sites (blog, extracted doctest tool, org-wide landing).
+- **Writers**: `site.yml` (push to main) rebuilds only `/next/`; `release.yml`
+  (tag) replaces the root, adds `/v/X.Y.Z/`, regenerates `versions.json`, and
+  rewrites the README install snippets to the released version (committed back
+  to main by the workflow). Both share a `site` concurrency group so they queue
+  rather than race on the branch.
+- The `/v/` archive starts at 0.1.0 (bootstrapped from current main, whose
+  library sources are identical to the v0.1.0 tag; the tag itself predates the
+  doc-test infrastructure).

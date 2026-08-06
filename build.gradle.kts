@@ -96,6 +96,9 @@ tasks.register<Exec>("site") {
         "--version", releasedVersion.get(),
         "--javadoc", layout.buildDirectory.dir("docs/javadoc").get().asFile.path,
         "--out", layout.buildDirectory.dir("site").get().asFile.path,
+        // Versioned deployments (root / v/X.Y.Z/ / next/) — see ADR-5 addendum.
+        "--prefix", providers.gradleProperty("sitePrefix").getOrElse(""),
+        "--channel", providers.gradleProperty("siteChannel").getOrElse(releasedVersion.get()),
     )
 }
 

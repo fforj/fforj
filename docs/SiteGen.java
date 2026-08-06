@@ -42,6 +42,8 @@ public class SiteGen {
     record Landing(Article article, String code) {}
 
     static Landing landing;
+    static String prefix = "";
+    static String channel = "";
 
     public static void main(String[] args) throws IOException {
         var opts = new LinkedHashMap<String, String>();
@@ -52,6 +54,13 @@ public class SiteGen {
         var docsDir = Path.of(opts.getOrDefault("docs", "src/test/java/dev/fforj/docs"));
         var out = Path.of(opts.getOrDefault("out", "build/site"));
         var javadoc = Path.of(opts.getOrDefault("javadoc", "build/docs/javadoc"));
+        // Versioned deployment (ADR-5 addendum): prefix is this build's path under the
+        // site root ("" for the latest release at root, "v/0.1.0/" for a frozen
+        // snapshot, "next/" for main); channel is the label the version selector
+        // shows for this build. The selector itself loads <site-root>/versions.json
+        // at page load, so frozen snapshots list versions released after them.
+        prefix = opts.getOrDefault("prefix", "");
+        channel = opts.getOrDefault("channel", version);
 
         List<Article> articles;
         try (Stream<Path> files = Files.list(docsDir)) {
@@ -389,7 +398,7 @@ public class SiteGen {
     // Pages
     // ------------------------------------------------------------------
 
-    static String shell(String root, String title, String description, String body) {
+    static String shell(String root, String page, String title, String description, String body) {
         return """
                 <!DOCTYPE html>
                 <html lang="en">
@@ -406,7 +415,11 @@ public class SiteGen {
                 </head>
                 <body>
                 <header class="top">
-                  <a class="wordmark" href="%sindex.html"><span class="lig">ﬀ</span>orj</a>
+                  <div class="brand">
+                    <a class="wordmark" href="%sindex.html"><span class="lig">ﬀ</span>orj</a>
+                    <select id="vsel" aria-label="Documentation version"
+                            data-prefix="%s" data-page="%s"><option>%s</option></select>
+                  </div>
                   <nav>
                     <a href="%sindex.html#guides">Guides</a>
                     <a href="%sapi/index.html">API</a>
@@ -420,9 +433,47 @@ public class SiteGen {
                   <a href="https://github.com/fforj/fforj">repository</a> —
                   the suite ran green before this page was built.</p>
                 </footer>
+                <script>
+                (function () {
+                  var sel = document.getElementById("vsel");
+                  var prefix = sel.dataset.prefix, page = sel.dataset.page;
+                  var path = location.pathname;
+                  // Site root = current path minus this build's prefix and page path,
+                  // tolerating servers that serve directories without "index.html".
+                  var root = null;
+                  var suffix = prefix + page;
+                  if (path.endsWith(suffix)) {
+                    root = path.slice(0, path.length - suffix.length);
+                  } else if (suffix.endsWith("index.html")) {
+                    var dir = suffix.slice(0, suffix.length - "index.html".length);
+                    if (path.endsWith(dir)) root = path.slice(0, path.length - dir.length);
+                  }
+                  if (root === null) return;
+                  fetch(root + "versions.json").then(function (r) { return r.json(); })
+                    .then(function (v) {
+                      sel.innerHTML = "";
+                      v.entries.forEach(function (e) {
+                        var o = document.createElement("option");
+                        o.value = e.path;
+                        o.textContent = e.label;
+                        if (e.path === prefix) o.selected = true;
+                        sel.appendChild(o);
+                      });
+                      sel.onchange = function () {
+                        var target = root + sel.value + page;
+                        // Same page may not exist in the chosen version; fall back to
+                        // that version's landing page.
+                        fetch(target, { method: "HEAD" })
+                          .then(function (r) { location.href = r.ok ? target : root + sel.value; })
+                          .catch(function () { location.href = root + sel.value; });
+                      };
+                    }).catch(function () {});
+                })();
+                </script>
                 </body>
                 </html>
-                """.formatted(escape(title), escape(description), root, root, root, root, body);
+                """.formatted(escape(title), escape(description), root, root,
+                prefix, page, escape(channel), root, root, body);
     }
 
     static String landingPage(List<Article> articles, String version) {
@@ -475,7 +526,8 @@ public class SiteGen {
                 <section class="ethos">
                   <div class="eyebrow">DELIBERATELY NOT HERE</div>
                   <ul>
-                    <li><strong>No IO monad</strong> — virtual threads and structured concurrency already solve it.</li>
+                    <li><strong>No IO monad</strong> — virtual threads removed the practical need;
+                    the pure effect tracking that remains costs more than it pays in Java.</li>
                     <li><strong>No tuples</strong> — records exist.</li>
                     <li><strong>No collections library</strong> — the stdlib is fine.</li>
                     <li><strong>No type classes</strong> — Java's type system doesn't want them.</li>
@@ -485,7 +537,7 @@ public class SiteGen {
                 </section>
                 </main>
                 """);
-        return shell("", "ﬀorj — functional for Java",
+        return shell("", "index.html", "ﬀorj — functional for Java",
                 "Result, Validated, NonEmptyList, Retry for Java 21+. Zero dependencies.",
                 body.toString());
     }
@@ -507,7 +559,8 @@ public class SiteGen {
                 .append(article.sourceFile())
                 .append("\">This page is generated from a test file — read or improve it on GitHub.</a></p>\n");
         body.append("</main>\n</div>\n");
-        return shell("../../", article.title() + " — ﬀorj", article.summary(), body.toString());
+        return shell("../../", "guides/" + article.slug() + "/index.html",
+                article.title() + " — ﬀorj", article.summary(), body.toString());
     }
 
     static void copyTree(Path from, Path to) throws IOException {
@@ -574,6 +627,13 @@ public class SiteGen {
               border-bottom: 1px solid var(--rule);
             }
             .wordmark { font-size: 1.5rem; font-weight: 600; text-decoration: none; }
+            .brand { display: flex; align-items: baseline; gap: 0.9rem; }
+            #vsel {
+              font-family: "JetBrains Mono", monospace; font-size: 0.72rem;
+              color: var(--muted); background: var(--code-bg);
+              border: 1px solid var(--rule); border-radius: 6px; padding: 0.2rem 0.4rem;
+            }
+            #vsel:hover { border-color: var(--rubric); color: var(--ink); }
             .top nav { display: flex; gap: 1.6rem; }
             .top nav a { text-decoration: none; font-size: 1rem; color: var(--muted); }
             .top nav a:hover { color: var(--rubric); }

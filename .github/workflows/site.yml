@@ -1,32 +1,27 @@
 name: Site
 
-# Builds and deploys fforj.dev on every push to main. The site is generated from
-# doc-tests (src/test/java/dev/fforj/docs) — the `site` task runs the full test
-# suite first, so no example can reach the website without passing CI.
+# Rebuilds the /next/ (unreleased main) docs on every push to main and redeploys
+# the gh-pages branch. The branch is pure build output: every deploy amends the
+# single existing commit and force-pushes, so it never accumulates history.
+# Released versions (/ root and /v/X.Y.Z/) are written by release.yml only.
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
-  group: pages
-  cancel-in-progress: true
+  group: site # shared with release.yml's site publish — queue, don't race
 
 jobs:
-  build-and-deploy:
+  next:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # full history so `git describe` finds the latest release tag
+          fetch-depth: 0 # tags needed for versions.json and the install snippet
 
       - uses: actions/setup-java@v4
         with:
@@ -35,14 +30,35 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Build site (tests + javadoc + generator)
-        run: ./gradlew site
+      - name: Build /next/ site from main
+        run: |
+          ./gradlew test javadoc
+          LATEST=$(git tag -l 'v*' | sort -V | tail -1 | sed 's/^v//')
+          java docs/SiteGen.java --version "${LATEST:-0.0.0}" \
+            --prefix "next/" --channel "main" \
+            --javadoc build/docs/javadoc --out out-next
 
-      - uses: actions/configure-pages@v5
-
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/checkout@v4
         with:
-          path: build/site
+          ref: gh-pages
+          path: pages
 
-      - id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Replace /next/ and redeploy
+        run: |
+          rm -rf pages/next
+          cp -R out-next pages/next
+          latest=$(git tag -l 'v*' | sort -V | tail -1 | sed 's/^v//')
+          {
+            printf '{"latest":"%s","entries":[{"label":"%s (latest)","path":""}' "$latest" "$latest"
+            for t in $(git tag -l 'v*' | sort -Vr | sed 's/^v//'); do
+              printf ',{"label":"%s","path":"v/%s/"}' "$t" "$t"
+            done
+            printf ',{"label":"main (unreleased)","path":"next/"}]}\n'
+          } > pages/versions.json
+          echo "fforj.dev" > pages/CNAME
+          cd pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit --amend -m "site: next @ ${GITHUB_SHA::7}"
+          git push --force

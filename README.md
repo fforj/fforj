@@ -116,10 +116,15 @@ parser, and `head()` is total because emptiness is unrepresentable.
 
 ## What is *not* here
 
-- **No `IO` monad.** Virtual threads + `StructuredTaskScope` solve the problem `IO`
-  was invented for. Write straight-line blocking code in a virtual thread; cancellation
-  works structurally; composition works via scope nesting. Adding `IO` on top would be
-  paying complexity tax for benefits already in the JVM.
+- **No `IO` monad.** Not because virtual threads make one pointless — an `IO` type
+  also buys referential transparency and effects-as-values (compose, retry, race a
+  description before running it), which no thread model provides. But the dominant
+  *practical* reason JVM code reached for `IO` — cheap, cancellable, composable
+  concurrency without blocking platform threads — is now in the language itself:
+  virtual threads plus structured concurrency. What remains of the pitch is pure
+  effect tracking, and in Java that costs more than it pays: it colors every API it
+  touches and can't be expressed well without higher-kinded types. fforj's lane is
+  errors-as-values (`Result`), leaving effects to the runtime.
 - **No `Future`/`Promise` reimplementation.** Stdlib has `CompletableFuture`. Virtual
   threads make most of that surface area unnecessary.
 - **No tuples.** Use records.
@@ -133,7 +138,7 @@ parser, and `head()` is total because emptiness is unrepresentable.
 ```kotlin
 // Gradle
 dependencies {
-    implementation("dev.fforj:fforj:<version>")
+    implementation("dev.fforj:fforj:0.1.0")
 }
 ```
 
@@ -142,9 +147,12 @@ dependencies {
 <dependency>
     <groupId>dev.fforj</groupId>
     <artifactId>fforj</artifactId>
-    <version><!-- version --></version>
+    <version>0.1.0</version>
 </dependency>
 ```
+
+The version above is kept current automatically: the release workflow rewrites it
+on every release.
 
 Or don't: every class stands alone by design — copying the source of the types you
 need into your own project (package renamed) gives you the exact same behavior.
