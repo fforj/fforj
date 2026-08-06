@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Result: errors as values · ﬀorj</title>
+<meta name="description" content="A sealed Ok | Err sum type. Pattern-match failures instead of throwing them.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22 font-family=%22Georgia,serif%22 fill=%22%23C0341D%22>ﬀ</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <a class="wordmark" href="../../index.html"><span class="lig">ﬀ</span>orj</a>
+    <select id="vsel" aria-label="Documentation version"
+            data-prefix="next/" data-page="guides/result/index.html"><option>main</option></select>
+  </div>
+  <nav>
+    <a href="../../index.html#guides">Guides</a>
+    <a href="../../api/index.html">API</a>
+    <a href="https://github.com/fforj/fforj">GitHub</a>
+  </nav>
+</header>
+<div class="layout">
+<aside class="sidenav">
+<div class="eyebrow">GUIDES</div>
+<ul>
+<li class="here"><a href="../result/index.html">Result: errors as values</a></li>
+<li><a href="../validated/index.html">Validated: every error, at once</a></li>
+<li><a href="../nonemptylist/index.html">NonEmptyList: emptiness, unrepresentable</a></li>
+<li><a href="../retry/index.html">Retry: backoff without a framework</a></li>
+<li><a href="../order/index.html">Putting it together: an order, end to end</a></li>
+</ul>
+</aside>
+<main class="article">
+<h1>Result: errors as values</h1>
+<p><code>Result&lt;E, T&gt;</code> is an operation that either succeeded with a <code>T</code> or failed with an <code>E</code>. Both outcomes are ordinary values, so failure handling becomes plain code you can read, type-check, and test, instead of a control-flow surprise three stack frames up.</p>
+<p>Errors are typed. Instead of <code>String</code> messages or a grab-bag <code>Exception</code>, model the ways an operation can fail as a small sealed hierarchy:</p>
+<pre class="code"><code><span class="c-kw">sealed</span> <span class="c-kw">interface</span> ParseError {
+    <span class="c-kw">record</span> NotANumber(String raw) <span class="c-kw">implements</span> ParseError {}
+    <span class="c-kw">record</span> NotPositive(<span class="c-kw">int</span> value) <span class="c-kw">implements</span> ParseError {}
+}</code></pre>
+<pre class="code"><code><span class="c-kw">static</span> Result&lt;ParseError, Integer&gt; parsePositive(String raw) {
+    <span class="c-kw">int</span> n;
+    <span class="c-kw">try</span> {
+        n = Integer.parseInt(raw);
+    } <span class="c-kw">catch</span> (NumberFormatException e) {
+        <span class="c-kw">return</span> Result.err(<span class="c-kw">new</span> ParseError.NotANumber(raw));
+    }
+    <span class="c-kw">return</span> n &gt; 0 ? Result.ok(n) : Result.err(<span class="c-kw">new</span> ParseError.NotPositive(n));
+}</code></pre>
+<h2 id="pattern-matching-is-the-api">Pattern matching is the API</h2>
+<p><code>Result</code> is a sealed interface with two record cases, <code>Ok</code> and <code>Err</code>. A <code>switch</code> over it is exhaustive: handle both cases or the compiler stops you. Combinators exist for chains, but this is the primary interface. There is no method to memorize, just the language.</p>
+<pre class="code"><code>String message = <span class="c-kw">switch</span> (parsePositive(<span class="c-str">"-3"</span>)) {
+    <span class="c-kw">case</span> Result.Ok&lt;ParseError, Integer&gt; ok -&gt; <span class="c-str">"got "</span> + ok.value();
+    <span class="c-kw">case</span> Result.Err&lt;ParseError, Integer&gt; err -&gt; <span class="c-kw">switch</span> (err.error()) {
+        <span class="c-kw">case</span> ParseError.NotANumber(String raw) -&gt; raw + <span class="c-str">" is not a number"</span>;
+        <span class="c-kw">case</span> ParseError.NotPositive(<span class="c-kw">int</span> n) -&gt; n + <span class="c-str">" is not positive"</span>;
+    };
+};
+
+assertEquals(<span class="c-str">"-3 is not positive"</span>, message);</code></pre>
+<h2 id="transform-without-unwrapping">Transform without unwrapping</h2>
+<p><code>map</code> transforms a success and leaves an error untouched; <code>flatMap</code> chains another fallible step; <code>recover</code> turns an error back into a success. Chains stop doing work at the first <code>Err</code>. No null checks, no nesting.</p>
+<pre class="code"><code>Result&lt;ParseError, Integer&gt; doubled = parsePositive(<span class="c-str">"21"</span>).map(n -&gt; n * 2);
+assertEquals(Result.ok(42), doubled);
+
+Result&lt;ParseError, Integer&gt; chained = parsePositive(<span class="c-str">"6"</span>)
+        .flatMap(n -&gt; parsePositive(String.valueOf(n - 7)))   <span class="c-com">// -1 -&gt; Err</span>
+        .map(n -&gt; n * 100);                                    <span class="c-com">// never runs</span>
+assertEquals(Result.err(<span class="c-kw">new</span> ParseError.NotPositive(-1)), chained);
+
+assertEquals(Result.ok(0), chained.recover(e -&gt; Result.ok(0)));</code></pre>
+<h2 id="wrap-code-that-throws">Wrap code that throws</h2>
+<p>The world is full of APIs that throw. <code>attempt</code> runs a block, catches anything thrown, and maps it into your error type. Several dependent throwing calls compose as straight-line code, and the first throw short-circuits the rest.</p>
+<pre class="code"><code>Result&lt;String, Integer&gt; r = Result.attempt(() -&gt; {
+    <span class="c-kw">int</span> a = mustParse(<span class="c-str">"12"</span>);        <span class="c-com">// throws on bad input</span>
+    <span class="c-kw">int</span> b = mustParse(<span class="c-str">"oops"</span>);      <span class="c-com">// throws here...</span>
+    <span class="c-kw">return</span> a + b;                   <span class="c-com">// ...so this never runs</span>
+}, t -&gt; <span class="c-str">"failed: "</span> + t.getMessage());
+
+assertEquals(Result.err(<span class="c-str">"failed: not a number: oops"</span>), r);</code></pre>
+<pre class="code"><code><span class="c-kw">static</span> <span class="c-kw">int</span> mustParse(String raw) <span class="c-kw">throws</span> IOException {
+    <span class="c-kw">try</span> {
+        <span class="c-kw">return</span> Integer.parseInt(raw);
+    } <span class="c-kw">catch</span> (NumberFormatException e) {
+        <span class="c-kw">throw</span> <span class="c-kw">new</span> IOException(<span class="c-str">"not a number: "</span> + raw);
+    }
+}</code></pre>
+<h2 id="sequence-result-returning-steps-with-binding">Sequence Result-returning steps with <code>binding</code></h2>
+<p>When steps already return <code>Result</code>, <code>binding</code> gives you do-notation: <code>bind.on(...)</code> hands back the raw success value, and the first <code>Err</code> aborts the whole block and becomes its result. No <code>flatMap</code> towers, and every earlier value stays in scope for later steps.</p>
+<pre class="code"><code>Result&lt;ParseError, Integer&gt; total = Result.binding(bind -&gt; {
+    <span class="c-kw">int</span> a = bind.on(parsePositive(<span class="c-str">"3"</span>));
+    <span class="c-kw">int</span> b = bind.on(parsePositive(<span class="c-str">"4"</span>));
+    <span class="c-kw">int</span> c = bind.on(parsePositive(<span class="c-str">"5"</span>));
+    <span class="c-kw">return</span> a * b * c;
+});
+
+assertEquals(Result.ok(60), total);</code></pre>
+<h2 id="guards-without-values-ensure">Guards without values: <code>ensure</code></h2>
+<p>Not every rule produces a value; some just have to hold. <code>bind.ensure</code> reads like an assertion but fails like everything else here: as a typed <code>Err</code> that short-circuits the block.</p>
+<pre class="code"><code>Result&lt;String, Integer&gt; withdrawal = Result.binding(bind -&gt; {
+    <span class="c-kw">int</span> balance = bind.on(Result.&lt;String, Integer&gt;ok(70));
+    bind.ensure(balance &gt;= 100, () -&gt; <span class="c-str">"insufficient funds: "</span> + balance);
+    <span class="c-kw">return</span> balance - 100;                  <span class="c-com">// never reached</span>
+});
+
+assertEquals(Result.err(<span class="c-str">"insufficient funds: 70"</span>), withdrawal);</code></pre>
+<h2 id="bridge-to-and-from-optional">Bridge to and from Optional</h2>
+<p><code>Optional</code> models absence; <code>Result</code> models failure with a reason. The bridges keep the line crisp: lifting an empty <code>Optional</code> into a <code>Result</code> asks <em>you</em> to name the failure, because emptiness alone doesn't carry one.</p>
+<pre class="code"><code>Optional&lt;NonEmptyList&lt;Integer&gt;&gt; none = NonEmptyList.fromList(List.of());
+
+Result&lt;String, NonEmptyList&lt;Integer&gt;&gt; r =
+        Result.fromOptional(none, () -&gt; <span class="c-str">"no candidates to rank"</span>);
+
+assertEquals(Result.err(<span class="c-str">"no candidates to rank"</span>), r);
+assertEquals(Optional.of(<span class="c-str">"no candidates to rank"</span>), r.errValue());</code></pre>
+<p class="edit"><a href="https://github.com/fforj/fforj/blob/main/src/test/java/dev/fforj/docs/ResultDocTest.java">This page is generated from a test file. Read or improve it on GitHub.</a></p>
+</main>
+</div>
+
+<footer class="foot">
+  <p><span class="lig rub">ﬀ</span>orj is MIT-licensed.
+  Every example on this site is a test in the
+  <a href="https://github.com/fforj/fforj">repository</a>;
+  the suite ran green before this page was built.</p>
+</footer>
+<script>
+(function () {
+  var sel = document.getElementById("vsel");
+  var prefix = sel.dataset.prefix, page = sel.dataset.page;
+  var path = location.pathname;
+  // Site root = current path minus this build's prefix and page path,
+  // tolerating servers that serve directories without "index.html".
+  var root = null;
+  var suffix = prefix + page;
+  if (path.endsWith(suffix)) {
+    root = path.slice(0, path.length - suffix.length);
+  } else if (suffix.endsWith("index.html")) {
+    var dir = suffix.slice(0, suffix.length - "index.html".length);
+    if (path.endsWith(dir)) root = path.slice(0, path.length - dir.length);
+  }
+  if (root === null) return;
+  fetch(root + "versions.json").then(function (r) { return r.json(); })
+    .then(function (v) {
+      sel.innerHTML = "";
+      v.entries.forEach(function (e) {
+        var o = document.createElement("option");
+        o.value = e.path;
+        o.textContent = e.label;
+        if (e.path === prefix) o.selected = true;
+        sel.appendChild(o);
+      });
+      sel.onchange = function () {
+        var target = root + sel.value + page;
+        // Same page may not exist in the chosen version; fall back to
+        // that version's landing page.
+        fetch(target, { method: "HEAD" })
+          .then(function (r) { location.href = r.ok ? target : root + sel.value; })
+          .catch(function () { location.href = root + sel.value; });
+      };
+    }).catch(function () {});
+})();
+</script>
+</body>
+</html>
