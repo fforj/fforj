@@ -31,6 +31,12 @@ To respect your time, please open an issue to discuss any feature requests befor
    ./gradlew test
    ```
 
+## AI-assisted development
+
+fforj offers AI primitives for **Claude Code** assisted development, enabled by default. The `.claude/agents/` directory defines the `architect`, `dev`, and `reviewer` agents that implement the contribution pipeline described in [CLAUDE.md](CLAUDE.md).
+
+If you prefer a different AI assistant, see [Optional Developer Experience (DX) tools](#optional-developer-experience-dx-tools) below.
+
 ### Optional Developer Experience (DX) tools
 
 The project includes configurations to streamline development, including `mise.toml` for runtime version management and `apm.yml` for AI-assistant harness contexts (OpenCode, Claude Code, Copilot, etc.).
