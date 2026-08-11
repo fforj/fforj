@@ -27,7 +27,6 @@ target/
 
 
 # APM dependencies
-apm.lock.yaml
 apm_modules/
 .opencode/
 .github/
