@@ -25,12 +25,10 @@ hs_err_pid*
 out/
 target/
 
-
 # APM dependencies
 apm_modules/
 .opencode/
-.github/
-.claude/*
-!.claude/settings.json
+.github/agents/
+.github/instructions
 AGENTS.md
 GEMINI.md
