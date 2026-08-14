@@ -24,3 +24,11 @@ hs_err_pid*
 # Output
 out/
 target/
+
+# APM dependencies
+apm_modules/
+.opencode/
+.github/agents/
+.github/instructions
+AGENTS.md
+GEMINI.md

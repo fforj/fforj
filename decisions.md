@@ -725,3 +725,66 @@ and it is opt-in, applied at the last possible moment.
 - `Retry.java` — `Policy` components, withers, `delayBefore`, jittered sleep.
 - `RetryTest.java` — schedule/cap/jitter-validation tests.
 - `RetryDocTest.java` — "Cap the backoff, spread the herd" section.
+
+---
+
+## ADR-8 (2026-08-11): APM (Agent Package Manager) as contributor tooling
+
+### Context
+
+The agent pipeline (architect → dev → reviewer) and the project's context have
+to work identically across every AI assistant a contributor might use — GitHub
+Copilot, Claude Code, Gemini CLI, and OpenCode. Before APM, those definitions
+were hand-maintained as parallel per-assistant copies that drifted. The reviewer
+of the PR that introduced the assistant harnesses asked that APM be recorded as
+official contributor tooling, per the "new tooling deps need an ADR" convention.
+
+### Decision
+
+Adopt **APM — Agent Package Manager** as contributor tooling. It is an
+open-source (MIT), community-driven dependency manager for AI-agent
+configuration — "`package.json` for AI agents" — developed by **Microsoft**
+(`github.com/microsoft/apm`). It is actively developed and fast-moving (v0.12 in
+May 2026; v0.28 pinned in `mise.toml` today), so treat it as a tool here to
+stay and evolve — but design so nothing depends on its survival.
+
+Usage in this repo:
+
+- `apm.yml` declares the harness targets (`copilot`, `gemini`, `opencode`) and
+  the single local package `java-ai-primitives` (`companion/ai/bundle`).
+- `apm install` pulls the package into `apm_modules/`; `apm compile` generates
+  each assistant's native context from that one source of truth — `AGENTS.md`,
+  `CLAUDE.md`, `GEMINI.md`, `.claude/agents/*.md`, `.github/agents/*.agent.md`,
+  `.opencode/agents/*.md`.
+- `apm.lock.yaml` pins package versions and content hashes so regeneration is
+  deterministic.
+
+### Consequences
+
+- One definition of the pipeline, compiled into every assistant's format — no
+  more drifting parallel copies.
+- **Failure mode if APM disappears:** none structural. Every generated file is
+  committed plain markdown and keeps working forever; the source primitives
+  under `companion/ai/bundle/.apm/` are ordinary markdown with YAML frontmatter
+  that a contributor can edit or copy by hand. We would lose only the
+  regeneration automation — hand-sync the handful of copies or pin the last
+  good binary. APM is contributor-DX only; the library build stays Gradle-only
+  and untouched.
+- The generated context files are build output in git: edit the primitives,
+  never the generated copies.
+
+### Alternatives considered
+
+- **Hand-maintained per-assistant files (status quo ante)**: rejected — exactly
+  the drift APM removes, and each new assistant multiplies the copies.
+- **Settle on one assistant only**: rejected — the pipeline is deliberately
+  assistant-agnostic so contributors can pick their tool.
+
+### Files to change
+
+- `apm.yml` — manifest (targets, package dependency).
+- `apm.lock.yaml` — dependency lockfile (generated).
+- `companion/ai/bundle/` — the `java-ai-primitives` package source.
+- Generated outputs: `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.claude/`,
+  `.github/agents/`, `.opencode/agents/`.
+- `CONTRIBUTING.md` — setup instructions (`apm install --update && apm compile`).

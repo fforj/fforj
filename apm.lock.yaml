@@ -1,0 +1,134 @@
+lockfile_version: '1'
+generated_at: '2026-08-06T20:39:47.724599+00:00'
+apm_version: 0.27.0
+dependencies:
+- repo_url: _local/bundle
+  name: java-ai-primitives
+  version: 1.0.0
+  package_type: apm_package
+  deployed_files:
+  - .claude/agents/architect.md
+  - .claude/agents/dev.md
+  - .claude/agents/reviewer.md
+  - .claude/rules/general.md
+  - .github/agents/architect.agent.md
+  - .github/agents/dev.agent.md
+  - .github/agents/reviewer.agent.md
+  - .github/instructions/general.instructions.md
+  - .opencode/agents/architect.md
+  - .opencode/agents/dev.md
+  - .opencode/agents/reviewer.md
+  deployed_file_hashes:
+    .claude/agents/architect.md: sha256:e443db74a2e49a20f860c20780130fb9d690fc3fce13d3a787aa12db9519b37f
+    .claude/agents/dev.md: sha256:d8e348854c209ff21f9f269513a88b4b38a3ca93991b7d5dc0fc5df259e77a4e
+    .claude/agents/reviewer.md: sha256:69d9b5c0c83338d17932dac80565671dd165becc8ea273002d983f6c2dc19d69
+    .claude/rules/general.md: sha256:4cf738574bbe17691846ca8db077ff77e971fcdca4f9b10571b8ae3fc32d48f3
+    .github/agents/architect.agent.md: sha256:e443db74a2e49a20f860c20780130fb9d690fc3fce13d3a787aa12db9519b37f
+    .github/agents/dev.agent.md: sha256:d8e348854c209ff21f9f269513a88b4b38a3ca93991b7d5dc0fc5df259e77a4e
+    .github/agents/reviewer.agent.md: sha256:69d9b5c0c83338d17932dac80565671dd165becc8ea273002d983f6c2dc19d69
+    .github/instructions/general.instructions.md: sha256:56f1e25bd0b717a26e5b42d1ae7de437a7161bdce5a5c5403ef4988bde357ae3
+    .opencode/agents/architect.md: sha256:e443db74a2e49a20f860c20780130fb9d690fc3fce13d3a787aa12db9519b37f
+    .opencode/agents/dev.md: sha256:d8e348854c209ff21f9f269513a88b4b38a3ca93991b7d5dc0fc5df259e77a4e
+    .opencode/agents/reviewer.md: sha256:69d9b5c0c83338d17932dac80565671dd165becc8ea273002d983f6c2dc19d69
+  source: local
+  local_path: ./companion/ai/bundle
+deployments:
+- kind: project-relative
+  target: claude
+  value: .claude/agents/architect.md
+  runtime: null
+  scope: project
+  owners:
+  - ./companion/ai/bundle
+  active_owner: ./companion/ai/bundle
+  content_hash: sha256:e443db74a2e49a20f860c20780130fb9d690fc3fce13d3a787aa12db9519b37f
+- kind: project-relative
+  target: claude
+  value: .claude/agents/dev.md
+  runtime: null
+  scope: project
+  owners:
+  - ./companion/ai/bundle
+  active_owner: ./companion/ai/bundle
+  content_hash: sha256:d8e348854c209ff21f9f269513a88b4b38a3ca93991b7d5dc0fc5df259e77a4e
+- kind: project-relative
+  target: claude
+  value: .claude/agents/reviewer.md
+  runtime: null
+  scope: project
+  owners:
+  - ./companion/ai/bundle
+  active_owner: ./companion/ai/bundle
+  content_hash: sha256:69d9b5c0c83338d17932dac80565671dd165becc8ea273002d983f6c2dc19d69
+- kind: project-relative
+  target: claude
+  value: .claude/rules/general.md
+  runtime: null
+  scope: project
+  owners:
+  - ./companion/ai/bundle
+  active_owner: ./companion/ai/bundle
+  content_hash: sha256:4cf738574bbe17691846ca8db077ff77e971fcdca4f9b10571b8ae3fc32d48f3
+- kind: project-relative
+  target: copilot
+  value: .github/agents/architect.agent.md
+  runtime: null
+  scope: project
+  owners:
+  - ./companion/ai/bundle
+  active_owner: ./companion/ai/bundle
+  content_hash: sha256:e443db74a2e49a20f860c20780130fb9d690fc3fce13d3a787aa12db9519b37f
+- kind: project-relative
+  target: copilot
+  value: .github/agents/dev.agent.md
+  runtime: null
+  scope: project
+  owners:
+  - ./companion/ai/bundle
+  active_owner: ./companion/ai/bundle
+  content_hash: sha256:d8e348854c209ff21f9f269513a88b4b38a3ca93991b7d5dc0fc5df259e77a4e
+- kind: project-relative
+  target: copilot
+  value: .github/agents/reviewer.agent.md
+  runtime: null
+  scope: project
+  owners:
+  - ./companion/ai/bundle
+  active_owner: ./companion/ai/bundle
+  content_hash: sha256:69d9b5c0c83338d17932dac80565671dd165becc8ea273002d983f6c2dc19d69
+- kind: project-relative
+  target: copilot
+  value: .github/instructions/general.instructions.md
+  runtime: null
+  scope: project
+  owners:
+  - ./companion/ai/bundle
+  active_owner: ./companion/ai/bundle
+  content_hash: sha256:56f1e25bd0b717a26e5b42d1ae7de437a7161bdce5a5c5403ef4988bde357ae3
+- kind: project-relative
+  target: opencode
+  value: .opencode/agents/architect.md
+  runtime: null
+  scope: project
+  owners:
+  - ./companion/ai/bundle
+  active_owner: ./companion/ai/bundle
+  content_hash: sha256:e443db74a2e49a20f860c20780130fb9d690fc3fce13d3a787aa12db9519b37f
+- kind: project-relative
+  target: opencode
+  value: .opencode/agents/dev.md
+  runtime: null
+  scope: project
+  owners:
+  - ./companion/ai/bundle
+  active_owner: ./companion/ai/bundle
+  content_hash: sha256:d8e348854c209ff21f9f269513a88b4b38a3ca93991b7d5dc0fc5df259e77a4e
+- kind: project-relative
+  target: opencode
+  value: .opencode/agents/reviewer.md
+  runtime: null
+  scope: project
+  owners:
+  - ./companion/ai/bundle
+  active_owner: ./companion/ai/bundle
+  content_hash: sha256:69d9b5c0c83338d17932dac80565671dd165becc8ea273002d983f6c2dc19d69

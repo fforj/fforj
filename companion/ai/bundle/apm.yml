@@ -1,0 +1,12 @@
+name: java-ai-primitives
+version: 1.0.0
+description: Local APM package that provides java 21 AI primitives
+targets:
+  - copilot
+  - opencode
+  - claude
+dependencies:
+  apm: []
+  mcp: []
+includes: auto
+scripts: {}
