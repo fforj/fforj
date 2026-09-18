@@ -381,6 +381,49 @@ class ValidatedTest {
         assertFalse(laterValidationRan[0], "an eager unwrap must abort before later validations bind");
     }
 
+    // Sealed error hierarchy for ADR-11 covariance test: two distinct subtypes,
+    // one bound via on(Validated) and one via on(Result).
+    sealed interface FieldError permits FieldError.Blank, FieldError.TooLong {
+        record Blank(String field) implements FieldError {}
+        record TooLong(String field, int max) implements FieldError {}
+    }
+
+    private static Validated<FieldError.Blank, String> nonBlankField(String field, String value) {
+        return value.isBlank()
+                ? Validated.invalid(new FieldError.Blank(field))
+                : Validated.valid(value);
+    }
+
+    private static Result<FieldError.TooLong, String> maxLength(String field, String value, int max) {
+        return value.length() <= max
+                ? Result.ok(value)
+                : Result.err(new FieldError.TooLong(field, max));
+    }
+
+    @Test
+    void accumulate_unifies_heterogeneous_error_subtypes() {
+        // Both steps fail with distinct FieldError subtypes; accumulate collects both
+        // errors widened to FieldError, with no per-step mapErr.
+        Validated<FieldError, String> bothFail = Validated.accumulate(acc -> {
+            var name = acc.on(nonBlankField("name", ""));            // Validated<Blank, String>
+            var bio = acc.on(maxLength("bio", "x".repeat(201), 200)); // Result<TooLong, String>
+            return name.value() + bio.value();
+        });
+        assertEquals(
+                Validated.<FieldError, String>invalid(NonEmptyList.of(
+                        new FieldError.Blank("name"),
+                        new FieldError.TooLong("bio", 200))),
+                bothFail);
+
+        // Happy path: both validations pass, Valid is returned.
+        Validated<FieldError, String> ok = Validated.accumulate(acc -> {
+            var name = acc.on(nonBlankField("name", "Alice"));
+            var bio = acc.on(maxLength("bio", "Short bio", 200));
+            return name.value() + ": " + bio.value();
+        });
+        assertEquals(Validated.<FieldError, String>valid("Alice: Short bio"), ok);
+    }
+
     @Test
     void isValid_and_isInvalid_are_self_consistent() {
         var valid = Validated.<Failure, Integer>valid(1);

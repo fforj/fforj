@@ -152,6 +152,12 @@ public sealed interface Result<E, T> {
      *
      * <p>Calling {@link #on(Result)} inside a binding block either returns the success
      * value or aborts the whole block at the first {@link Err} encountered.
+     *
+     * <p>The error type is consumed covariantly: a block typed {@code Binder<BankError>}
+     * accepts steps returning {@code Result<NoSuchAccount, …>},
+     * {@code Result<WrongPin, …>}, and so on, where each subtype implements
+     * {@code BankError}. No per-step {@code mapErr} is needed; the binding block unifies
+     * the subtypes into the block's {@code E} automatically. See ADR-11.
      */
     @FunctionalInterface
     interface Binder<E> {
@@ -160,8 +166,11 @@ public sealed interface Result<E, T> {
          * returns the value if {@link Ok}, otherwise short-circuits the enclosing block,
          * which then evaluates to that {@link Err}. Only legal while the surrounding
          * {@code binding} call is on the stack.
+         *
+         * <p>The error is consumed covariantly ({@code ? extends E}), so steps that
+         * return a subtype of the block's error are accepted without {@code mapErr}.
          */
-        <T> T on(Result<E, T> result);
+        <T> T on(Result<? extends E, T> result);
 
         /**
          * Bind an {@link Optional} inside a {@link #binding(Function) binding} block: a
@@ -247,10 +256,10 @@ public sealed interface Result<E, T> {
 
         var binder = new Binder<E>() {
             @Override
-            public <U> U on(Result<E, U> result) {
+            public <U> U on(Result<? extends E, U> result) {
                 return switch (result) {
-                    case Ok<E, U> ok -> ok.value();
-                    case Err<E, U> err -> throw new Abort(this, err.error());
+                    case Ok<? extends E, U> ok -> ok.value();
+                    case Err<? extends E, U> err -> throw new Abort(this, err.error());
                 };
             }
         };
