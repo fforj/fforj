@@ -429,4 +429,67 @@ class ResultTest {
         assertTrue(Result.<Failure, Integer>err(new Failure.Message("e")).isErr());
         assertFalse(Result.<Failure, Integer>err(new Failure.Message("e")).isOk());
     }
+
+    // Sealed error hierarchy used to verify ADR-11: three distinct subtypes, each
+    // returned by a different step, unified by the binding block's E = BankError.
+    sealed interface BankError permits BankError.NoSuchAccount, BankError.WrongPin, BankError.OverDailyLimit {
+        record NoSuchAccount(String id) implements BankError {}
+        record WrongPin() implements BankError {}
+        record OverDailyLimit(int requested, int remaining) implements BankError {}
+    }
+
+    private static Result<BankError.NoSuchAccount, String> findAccount(String id) {
+        return id.isEmpty()
+                ? Result.err(new BankError.NoSuchAccount(id))
+                : Result.ok("acc-" + id);
+    }
+
+    private static Result<BankError.WrongPin, String> verifyPin(String account, String pin) {
+        return pin.equals("1234")
+                ? Result.ok(account)
+                : Result.err(new BankError.WrongPin());
+    }
+
+    private static Result<BankError.OverDailyLimit, Integer> withdraw(String account, int amount) {
+        int limit = 500;
+        return amount <= limit
+                ? Result.ok(amount)
+                : Result.err(new BankError.OverDailyLimit(amount, limit));
+    }
+
+    @Test
+    void binding_unifies_heterogeneous_error_subtypes() {
+        // Happy path: three steps each returning a distinct BankError subtype, all Ok.
+        // The block is typed Binder<BankError>; no per-step mapErr.
+        Result<BankError, Integer> ok = Result.binding(bind -> {
+            var account = bind.on(findAccount("alice"));       // Result<NoSuchAccount, String>
+            var verified = bind.on(verifyPin(account, "1234")); // Result<WrongPin, String>
+            return bind.on(withdraw(verified, 200));            // Result<OverDailyLimit, Integer>
+        });
+        assertEquals(Result.<BankError, Integer>ok(200), ok);
+
+        // NoSuchAccount error propagates as BankError.
+        Result<BankError, Integer> noAccount = Result.binding(bind -> {
+            var account = bind.on(findAccount(""));            // Err(NoSuchAccount) -> aborts
+            var verified = bind.on(verifyPin(account, "1234"));
+            return bind.on(withdraw(verified, 200));
+        });
+        assertEquals(Result.<BankError, Integer>err(new BankError.NoSuchAccount("")), noAccount);
+
+        // WrongPin error propagates as BankError.
+        Result<BankError, Integer> wrongPin = Result.binding(bind -> {
+            var account = bind.on(findAccount("alice"));
+            var verified = bind.on(verifyPin(account, "9999")); // Err(WrongPin) -> aborts
+            return bind.on(withdraw(verified, 200));
+        });
+        assertEquals(Result.<BankError, Integer>err(new BankError.WrongPin()), wrongPin);
+
+        // OverDailyLimit error propagates as BankError.
+        Result<BankError, Integer> overLimit = Result.binding(bind -> {
+            var account = bind.on(findAccount("alice"));
+            var verified = bind.on(verifyPin(account, "1234"));
+            return bind.on(withdraw(verified, 1000));            // Err(OverDailyLimit) -> aborts
+        });
+        assertEquals(Result.<BankError, Integer>err(new BankError.OverDailyLimit(1000, 500)), overLimit);
+    }
 }

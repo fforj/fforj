@@ -788,3 +788,688 @@ Usage in this repo:
 - Generated outputs: `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.claude/`,
   `.github/agents/`, `.opencode/agents/`.
 - `CONTRIBUTING.md` — setup instructions (`apm install --update && apm compile`).
+
+---
+
+## ADR-9 (2026-09-18): Make DSL misuse fail loudly — swallowed short-circuits and escaped handles
+
+### Context
+
+The `Result.binding` / `Validated.accumulate` DSLs abort a block by throwing a
+package-private, stack-trace-free `Halt` subclass (`Abort`) caught at the
+boundary (ADR-1, ADR-2). Three ways a caller can defeat that mechanism today,
+all of which fail silently or obscurely rather than telling the developer what
+they did ([issue #2](https://github.com/fforj/fforj/issues/2) and its follow-up
+comment):
+
+1. **Swallowed short-circuit.** Code that wraps a `bind.on` / `Bound.value()`
+   call in `catch (RuntimeException e)` or `catch (Exception e)` intercepts the
+   abort. The block runs on past the failed step and the boundary returns `Ok` /
+   `Valid` of whatever the block fabricated. The first `Err` / the recorded
+   errors are silently lost, and side effects after the failed step ran anyway.
+   Today this is only a Javadoc caveat; nothing enforces it. The first external
+   write-up of the library called this out as the one thing that "requires a bit
+   of discipline."
+2. **A `catch (Throwable)` swallow.** The broadest catch-all defeats even a
+   supertype change; it needs a boundary-side check.
+3. **Escaped handle.** A `Binder` / `Accumulator` (or a poisoned `Bound`)
+   captured in a field or lambda and called *after* `binding` / `accumulate`
+   returned has no boundary left to unwind to. The abort propagates out of the
+   caller as a bare `Halt` subclass: null message, no stack trace, a
+   package-private type name. Nothing tells the developer they used the handle
+   out of scope.
+
+There is no legitimate use for any of the three. `Halt` is package-private and
+cannot be caught by name; every interception is an accident. The block ran past
+a failed step, which is a structural bug the developer must see, not an outcome
+to paper over by returning the swallowed error.
+
+This ADR is scoped to #2 only. Issues #3 and #6 also touch these handles and are
+separate later decisions; nothing here renumbers or pre-empts them.
+
+### Decision
+
+Three complementary measures across `Halt`, `Result.binding`, and
+`Validated.accumulate`. No public API changes: `Halt` and the local `Abort`
+classes stay package-private, the `Binder` / `Accumulator` / `Bound` signatures
+are unchanged. The four-plus-one-reserved type budget is untouched.
+
+**1. `Halt extends Error` (was `RuntimeException`).** The common accidental
+catch-alls — `catch (RuntimeException e)`, `catch (Exception e)` — no longer
+intercept a DSL abort at all, so a swallow written with either of them silently
+becomes correct short-circuiting instead of a lost error. `Error` keeps the same
+4-arg `(message, cause, enableSuppression, writableStackTrace)` protected
+constructor, so `Halt`'s stack-trace-free construction is unchanged. The two
+existing catch sites stay correct: each boundary catches its local `Abort` by
+name (a `catch` clause may name any `Throwable` subtype), and `Result.attempt`
+catches `Halt` explicitly *before* its `catch (Throwable t)`, so an abort still
+passes through `attempt` untouched. Only `catch (Throwable)` / `catch (Error)`
+can now intercept an abort, and measure 2 covers that residue.
+
+**2. Boundary-side swallow detection.** Each `Binder` / `Accumulator` instance
+carries a mutable `boolean aborted`, set at the exact site where it throws its
+`Abort`:
+- `binding`: set in `Binder.on` on the `Err` branch, immediately before throwing.
+- `accumulate`: set inside the poisoned `Bound.value()` closure, immediately
+  before throwing (binding a failure only *records* errors and never sets it).
+
+The boundary, on **normal** completion of the block (its own `Abort` was not
+caught, i.e. it was swallowed inside the block), checks the flag:
+- `binding`: `aborted` true on normal return -> throw
+  `IllegalStateException("Result.binding: a bind.on short-circuit was swallowed "
+  + "by a catch inside the binding block; the block ran past a failed step")`
+  instead of `ok(outcome)`.
+- `accumulate`: `aborted` true on normal return -> throw the analogous
+  `IllegalStateException`. Crucially this is distinct from the existing,
+  legitimate "block completed without unwrapping a failed binding" path
+  (`aborted` false, `errors` non-empty), which MUST still return `Invalid`.
+
+Per-owner flags compose with the existing `owner` token for nested blocks: if an
+inner block swallows an *outer* handle's abort with `catch (Throwable)`, the
+outer handle's `aborted` flag is set, the inner boundary sees its own flag clear
+and returns normally, and the outer boundary catches the swallow when the outer
+block returns. The abort is always diagnosed by the boundary that owns it.
+
+The thrown `IllegalStateException` does not chain the payload-less `Abort` (no
+message, no stack trace, nothing useful); its own stack trace points at the
+offending `binding` / `accumulate` call.
+
+**3. Escaped-handle detection.** Each `Binder` / `Accumulator` carries a
+`boolean closed`, set to `true` in a `finally` on the boundary (after normal
+return, short-circuit, or a measure-2 throw). Guarded call sites throw
+`IllegalStateException` when `closed`:
+- `Binder.on(...)` after close -> `"bind.on called outside its binding block"`.
+- `Accumulator.on(...)` after close ->
+  `"Accumulator.on called outside its accumulate block"`.
+- A poisoned `Bound.value()` (the closure that would throw `Abort`) after close
+  -> `"Bound.value() called outside its accumulate block"`. The check runs
+  before the abort would be thrown, so an escaped poisoned handle now yields a
+  clean `IllegalStateException` rather than a bare `Halt` leaking out.
+
+The `closed` check is placed first in each guarded method, before any switch on
+the argument.
+
+**Non-goals (unchanged, stated for the dev):** a valid (non-poisoned) `Bound`
+returned by `accumulate` still just returns its captured value if called after
+the block, harmlessly; it holds no control flow, so it is not guarded (guarding
+it would mean wrapping every valid `Bound` in an extra closure for no safety
+gain). Concurrent misuse — handing a handle to another thread that calls it
+*while* the block is still running on the original thread — is out of scope; the
+`closed`/`aborted` flags are plain `boolean`s addressing the sequential
+escape/swallow the issue describes, matching the existing single-threaded,
+synchronous execution model of both DSLs.
+
+Cost stays zero on the happy path: two `boolean` writes per block plus two reads
+at the boundary; no allocation, no stack capture.
+
+#### Call-site shape (binding; accumulate is analogous)
+
+```java
+static <E, T> Result<E, T> binding(Function<? super Binder<E>, ? extends T> block) {
+    Objects.requireNonNull(block, "binding block must not be null");
+
+    final class Abort extends Halt {
+        final E error;
+        Abort(Object owner, E error) { super(owner); this.error = error; }
+    }
+
+    var binder = new Binder<E>() {
+        boolean aborted = false;   // this handle threw its Abort
+        boolean closed  = false;   // binding() has returned
+
+        @Override public <U> U on(Result<E, U> result) {
+            if (closed) throw new IllegalStateException(
+                    "bind.on called outside its binding block");
+            return switch (result) {
+                case Ok<E, U> ok  -> ok.value();
+                case Err<E, U> err -> { aborted = true; throw new Abort(this, err.error()); }
+            };
+        }
+    };
+
+    T outcome;
+    try {
+        outcome = block.apply(binder);              // may abort or complete
+    } catch (Abort abort) {
+        if (abort.owner != binder) throw abort;     // foreign abort: unwind to its owner
+        return err(abort.error);                    // legitimate short-circuit
+    } finally {
+        binder.closed = true;
+    }
+    if (binder.aborted) {                           // normal return despite an abort => swallowed
+        throw new IllegalStateException(
+                "Result.binding: a bind.on short-circuit was swallowed by a catch "
+                + "inside the binding block; the block ran past a failed step");
+    }
+    return ok(outcome);
+}
+```
+
+#### Test plan (the dev MUST cover)
+
+`ResultTest`:
+- A `catch (RuntimeException e)` around a `bind.on(err)` inside the block no
+  longer swallows: the block short-circuits and `binding` returns the `Err`
+  (proves measure 1).
+- A `catch (Throwable t)` around `bind.on(err)` that lets the block return
+  normally makes `binding` throw `IllegalStateException` with the swallow message
+  (measure 2).
+- A `Binder` captured out of the block and called after `binding` returned throws
+  `IllegalStateException("bind.on called outside its binding block")` (measure 3).
+- Nested: an inner block that swallows the *outer* binder's abort with
+  `catch (Throwable)` and returns normally makes the *outer* `binding` throw
+  `IllegalStateException` (per-owner flag).
+- Regression (must stay green): all existing binding/nested tests, and
+  `binding_abort_passes_through_an_attempt_wrapping_the_bound_call` (proves
+  `attempt` still rethrows `Halt` now that it is an `Error`).
+
+`ValidatedTest`:
+- `catch (Throwable)` around a `Bound.value()` that lets the block return
+  normally makes `accumulate` throw `IllegalStateException`.
+- `catch (RuntimeException)` around `Bound.value()` no longer swallows.
+- An `Accumulator` used after `accumulate` returned throws
+  `IllegalStateException("Accumulator.on called outside its accumulate block")`.
+- A poisoned `Bound` unwrapped after `accumulate` returned throws
+  `IllegalStateException("Bound.value() called outside its accumulate block")`.
+- Regression (must stay green): the block that records errors but never unwraps a
+  failed binding still returns `Invalid` (NOT `IllegalStateException` — this is
+  the `aborted`-false / errors-present path), plus the existing nested-accumulate
+  and traverse/onEach tests.
+
+### Consequences
+
+- The DSL's one documented "requires discipline" footgun becomes a loud failure:
+  a swallowed short-circuit throws instead of fabricating a success, and an
+  out-of-scope handle throws a named `IllegalStateException` instead of leaking a
+  bare package-private `Halt`. The Javadoc "How it short-circuits, and the one
+  caveat" section in `Result.binding` and the matching caveat in
+  `Validated.accumulate` are rewritten: `RuntimeException`/`Exception` catch-alls
+  around a bound call are now harmless (measure 1); only a `catch (Throwable)`
+  swallow or an escaped handle can still misuse the DSL, and both now throw
+  `IllegalStateException` rather than silently corrupting the result.
+- `Halt` becoming an `Error` is invisible outside the package (it is
+  package-private) but is a deliberate use of `Error` for control flow. Recorded
+  here so a future reader does not "fix" it back to `RuntimeException`: the whole
+  point is that ordinary `catch (Exception)` must not see it. `Result.attempt`'s
+  `Halt`-before-`Throwable` catch order is load-bearing and must be preserved.
+- Forward compat: if a future Java gains value-carrying extraction from sealed
+  types without throwing (superseding ADR-1's mechanism), `Halt` and all three
+  measures disappear together; the public signatures are unaffected either way.
+
+### Alternatives considered
+
+- **Return the swallowed `Err`/`Invalid` instead of throwing.** Rejected: the
+  block already ran side effects past a failed step, which is the bug. Silently
+  returning the "right" error hides a structural mistake the developer must fix,
+  and it is impossible in general for `accumulate` (a swallowed unwrap leaves the
+  block in an arbitrary state).
+- **Only change `Halt`'s supertype to `Error` (drop measures 1 and 3).**
+  Rejected: `catch (Throwable)` still swallows, and an escaped handle still leaks
+  a bare `Halt`. The supertype change narrows the accident surface but does not
+  close it; the boundary checks do.
+- **Only add the boundary checks (keep `Halt extends RuntimeException`).**
+  Rejected: workable but leaves the most common accidental catch-alls
+  (`RuntimeException`/`Exception`) breaking short-circuiting up to the moment the
+  block returns, detected only at the end. Making those catches harmless outright
+  is strictly better and nearly free.
+- **Make the handles thread-safe (volatile/atomic flags) to also catch
+  concurrent escape.** Rejected as out of scope: both DSLs are synchronous
+  single-thread constructs; issue #2 is about sequential swallow/escape. Revisit
+  only if a concurrent-handle hazard is actually reported.
+
+### Files to change
+
+- `src/main/java/dev/fforj/Halt.java` — `extends Error`; update the class Javadoc
+  (why `Error`, and that `attempt`'s catch order depends on it).
+- `src/main/java/dev/fforj/Result.java` — `binding`: `aborted` + `closed` flags,
+  swallow check on normal return, `closed` guard in `Binder.on`; rewrite the
+  "How it short-circuits, and the one caveat" Javadoc. `attempt` Javadoc:
+  note `Halt` is now an `Error` (the pass-through paragraph is otherwise
+  unchanged).
+- `src/main/java/dev/fforj/Validated.java` — `accumulate`: `aborted` + `closed`
+  flags, swallow check distinct from the legitimate no-unwrap `Invalid` path,
+  `closed` guard in `Accumulator.on` and in the poisoned `Bound.value()` closure;
+  rewrite the caveat paragraph.
+- `src/test/java/dev/fforj/ResultTest.java` — the binding tests above.
+- `src/test/java/dev/fforj/ValidatedTest.java` — the accumulate tests above.
+- Doc-tests / `README.md` — no change required (neither demonstrates the old
+  caveat). A short "misuse fails loudly" section MAY be added to
+  `ResultDocTest`/`ValidatedDocTest` later; not required by this ADR.
+- `CLAUDE.md` — no change; the "No magic" carve-out (ADR-1) still stands, this
+  ADR only hardens its failure modes.
+
+---
+
+## ADR-10 (2026-09-18): Void-returning fallible steps — the convention is `Optional<E>`, not `Result<E, Void>`
+
+### Context
+
+Some fallible operations have no meaningful success value: a permission check, a
+side-effecting write whose only outcomes are "failed with an `E`" or "nothing to
+report". The natural Java shape for them, `Result<E, Void>`, is **unconstructible
+on the `Ok` side**: `Ok`'s compact constructor rejects `null` and `Void` has no
+instances. The DSL itself already winks at this — `Binder.ensure(boolean, Supplier)`
+builds a `Result<E, Void>` that is only ever an `Err`, never an `Ok`
+([issue #3](https://github.com/fforj/fforj/issues/3)).
+
+Two concrete friction points. (1) There is no clean way to sequence a
+void-fallible step inside a `binding` / `accumulate` block: you must invent a
+throwaway carrier value just to have something to bind. (2)
+`attempt(() -> { sideEffect(); return null; }, mapper)` misbehaves: the body
+returns `null`, `ok(null)` is evaluated *inside* `attempt`'s `try`, so the `Ok`
+null-check NPE is caught by `catch (Throwable t)` and **mapped through `onThrow`
+into an `Err`** — a programmer mistake (returning `null`) silently becomes a
+domain error, handing `onThrow` a `NullPointerException` it never anticipated.
+
+Non-goals, both locked: **no `Ok(null)`** (it destroys the null discipline the
+whole library rests on) and **no new `Unit` type** (bounded-scope rule; Java has
+no `Unit`, and `CompletableFuture<Void>`'s null convention is exactly the
+non-null invariant we reject). The fforj-shaped reading instead: an operation
+with no success value *is* "an error, or the absence of one" — which the standard
+library already spells `Optional<E>`. Errors stay values; zero new types.
+
+This ADR is scoped to #3. ADR-9 (same day, issue #2) hardened these same
+`Binder`/`Accumulator` handles with `closed`/`aborted` flags; nothing here
+contradicts it — the additions below are `default` methods that delegate to the
+already-guarded `on(...)`. Issue #6 (`Binder.on` variance in `E`) is a separate
+later decision and is not touched here.
+
+### Decision
+
+Three measures. No new types; the four-plus-one-reserved budget is unchanged. No
+public signature on `on` changes.
+
+**1. Convention (documentation).** A fallible step with no success value returns
+either *natural evidence* when it has any (a deleted-row count, a stored id, the
+validated input passed through) or **`Optional<E>`** when it genuinely does not:
+present = the failure, empty = success. `Result<E, Void>` is documented as a
+non-goal on `Result`'s class Javadoc, pointing at this convention. This is the
+primary answer; the two code additions below just make the convention flow
+through the DSLs and the `attempt` boundary.
+
+**2. `ensure(Optional<? extends E>)` on both DSL handles.** A `default` overload
+on `Binder` and, symmetrically, on `Accumulator` (the library keeps these two
+handles feature-symmetric — ADR-2, ADR-6). Unambiguous against the existing
+`ensure(boolean, Supplier)` by arity (1 arg vs 2), and it does **not** overload
+`on(Optional, Supplier)` — that method reads an `Optional<T>` *value* where empty
+means failure, the opposite polarity, so reusing `on` for an `Optional<E>` error
+would be a footgun. The name `ensure` matches the existing "no value to bind, here
+is how it can fail" family.
+
+```java
+// Result.Binder<E> — short-circuits, like binding an Err:
+/**
+ * Sequence a void-fallible step modeled as {@link Optional}{@code <E>}: present =
+ * the failure, empty = success. A present error short-circuits the enclosing
+ * {@code binding} block exactly like {@link #on(Result) on} of an {@link Err}; an
+ * empty {@code Optional} is a no-op. The void counterpart to {@code on} — there is
+ * no value to unwrap, so nothing is returned. Prefer natural evidence (a count, an
+ * id, the input passed through) when the step has any; reach for {@code Optional<E>}
+ * only when it genuinely has no success value ({@code Result<E, Void>} is
+ * unconstructible on the {@code Ok} side by the library's null discipline).
+ */
+default void ensure(Optional<? extends E> failure) {
+    Objects.requireNonNull(failure, "ensure failure Optional must not be null");
+    failure.ifPresent(e -> this.<Void>on(Result.err(e)));
+}
+```
+
+```java
+// Validated.Accumulator<E> — records and keeps running, like every binding:
+/**
+ * Accumulate a void-fallible step modeled as {@link Optional}{@code <E>}: a present
+ * error is recorded and the block keeps running (like every other binding); an
+ * empty {@code Optional} records nothing. The accumulating counterpart to
+ * {@link Binder#ensure(Optional)}.
+ */
+default void ensure(Optional<? extends E> failure) {
+    Objects.requireNonNull(failure, "ensure failure Optional must not be null");
+    failure.ifPresent(e -> on(Validated.<E, Void>invalid(e)));
+}
+```
+
+Both delegate to the ADR-9-guarded `on(...)`, so an escaped/closed handle is
+still caught, and `Binder.ensure` short-circuits via the same `closed`/`aborted`
+machinery. Call site:
+
+```java
+Result<Failure, Order> r = Result.binding(bind -> {
+    var order = bind.on(loadOrder(id));          // Ok  -> value
+    bind.ensure(policy.check(order, actor));      // Optional<Failure>: present aborts here
+    bind.ensure(inventory.reserve(order));        // another void-fallible step
+    return order;                                  // reached only if both checks passed
+});
+```
+
+**3. `attempt` treats a `null` body return as a loud programming error.** Restructure
+so the body's value is captured inside the `try` but the null-check runs *after*
+it, so its NPE propagates to the caller instead of being mapped through `onThrow`:
+
+```java
+static <E, T> Result<E, T> attempt(
+        Callable<? extends T> body,
+        Function<? super Throwable, ? extends E> onThrow) {
+    T value;
+    try {
+        value = body.call();
+    } catch (Halt halt) {
+        throw halt;                                  // ADR-9: pass an enclosing abort through
+    } catch (InterruptedException ie) {
+        Thread.currentThread().interrupt();
+        return err(onThrow.apply(ie));
+    } catch (Throwable t) {
+        return err(onThrow.apply(t));
+    }
+    // A null return is a bug in the body, not a domain failure: surface it loudly
+    // instead of mapping a surprise NPE through onThrow.
+    Objects.requireNonNull(value,
+            "attempt body returned null; return a value, or model a void-fallible "
+            + "operation as Optional<E> (an absent error means success)");
+    return ok(value);
+}
+```
+
+The `catch (Halt halt)` clause stays first (ADR-9 requires it; `Halt` is now an
+`Error`), and the `InterruptedException`/`Throwable` behavior is unchanged. Only
+the `null`-return path changes: it now throws a targeted `NullPointerException`
+to the caller rather than an `onThrow`-mapped `Err`.
+
+#### Test plan (the dev MUST cover)
+
+`ResultTest`:
+- `binding_ensure_optional_present_short_circuits` — `bind.ensure(Optional.of(e))`
+  aborts the block; `binding` returns `Err(e)`, and later steps do not run
+  (step-log proof).
+- `binding_ensure_optional_empty_is_a_no_op` — `bind.ensure(Optional.empty())`
+  leaves the block running; `binding` returns `Ok` of the final value.
+- `attempt_body_returning_null_throws_targeted_npe` — a body returning `null`
+  throws `NullPointerException` with the new message **to the caller**, and
+  `onThrow` is NOT invoked (assert via a mapper that records a flag). This pins
+  the behavior change: null is no longer mapped to `Err`.
+- Regression (must stay green): existing `attempt` tests, and the ADR-9
+  `binding`-abort-through-`attempt` pass-through test.
+
+`ValidatedTest`:
+- `accumulate_ensure_optional_present_records_error_and_keeps_running` — a present
+  `Optional<E>` records the error, a later binding also runs, result is `Invalid`
+  carrying both in order.
+- `accumulate_ensure_optional_empty_is_a_no_op` — an empty `Optional<E>` records
+  nothing; an otherwise all-valid block returns `Valid`.
+
+Doc-tests: a short "steps with no value to return" section MAY be added to
+`ResultDocTest` (the `ensure(Optional)` + `attempt` convention); not required by
+this ADR.
+
+### Consequences
+
+- Void-fallible steps have one blessed shape (`Optional<E>`, or natural evidence)
+  and flow through both DSLs without inventing a carrier value. `Result<E, Void>`
+  stays unconstructible on the `Ok` side, as intended.
+- **Behavior change in `attempt`:** a body that returns `null` now throws a
+  targeted `NullPointerException` to the caller instead of being mapped through
+  `onThrow` into an `Err`. This is a deliberate "misuse fails loudly" fix in the
+  spirit of ADR-9 — the old path handed `onThrow` an unexpected NPE and disguised
+  a programming error as a domain failure. Pre-1.0, acceptable; called out here so
+  it is not mistaken for a regression.
+- The `Binder`/`Accumulator` handles stay feature-symmetric.
+- Forward compat: if a future Java gains a first-class no-value success shape, the
+  convention can be revisited, but `Optional<E>` remains valid; the two `ensure`
+  overloads and the `attempt` guard are unaffected.
+
+### Alternatives considered
+
+- **Make `Result<E, Void>` constructible (allow `Ok(null)` for `Void`, or a
+  private sentinel).** Rejected: `Ok(null)` breaks the null discipline
+  everywhere, and a `Void` sentinel is a `Unit` type in disguise — both locked
+  non-goals. `Optional<E>` already models "error or nothing" in the stdlib.
+- **A `Unit`/`Nothing` type plus `Result<E, Unit>`.** Rejected: bounded-scope
+  rule; a sixth public type for a case `Optional<E>` covers is exactly the Vavr
+  trap CLAUDE.md guards against.
+- **Overload `on(Optional<? extends E>)` for the error-side Optional.** Rejected:
+  `on(Optional<? extends T>, Supplier)` already reads an `Optional` *value* where
+  empty means failure; a single-arg `on(Optional)` with present-means-failure
+  polarity, resolved only by arity, is a live footgun. A distinctly-named
+  `ensure` keeps the polarity legible.
+- **Leave `attempt`'s null path as-is (map through `onThrow`).** Rejected: it
+  disguises a programming error as a domain failure and feeds `onThrow` an NPE it
+  was never written to handle. Failing loudly is strictly clearer and nearly free.
+
+### Files to change
+
+- `src/main/java/dev/fforj/Result.java` — add `Binder.ensure(Optional<? extends E>)`;
+  restructure `attempt` for the post-`try` null-check with the targeted message;
+  add the `Result<E, Void>` / `Optional<E>` convention paragraph to the class
+  Javadoc and to `attempt`'s Javadoc.
+- `src/main/java/dev/fforj/Validated.java` — add
+  `Accumulator.ensure(Optional<? extends E>)`.
+- `src/test/java/dev/fforj/ResultTest.java` — the binding-`ensure` and
+  `attempt`-null tests above.
+- `src/test/java/dev/fforj/ValidatedTest.java` — the accumulate-`ensure` tests.
+- Doc-tests / `README.md` — optional "steps with no value" section in
+  `ResultDocTest`; not required.
+- `CLAUDE.md` — no change; no locked decision moves (the non-goals here restate
+  existing locked rows).
+
+---
+
+## ADR-11 (2026-09-18): Error-covariant DSL handles — `Binder.on` / `Accumulator.on` accept `Result<? extends E, …>`
+
+### Context
+
+The flagship fforj pattern, recommended in the README and the first external
+write-up, is a sealed error hierarchy with one record per failure, sequenced in a
+`binding` block ([issue #6](https://github.com/fforj/fforj/issues/6)):
+
+```java
+sealed interface BankError permits NoSuchAccount, WrongPin, OverDailyLimit {}
+Result<NoSuchAccount, String>  findAccount(String id);
+Result<WrongPin, String>       verifyPin(String account, String pin);
+Result<OverDailyLimit, Integer> withdraw(String account, int amount);
+```
+
+Today it does not compile. `Binder.on` is `<T> T on(Result<E, T> result)`,
+invariant in `E`, so a block typed `Binder<BankError>` rejects a step returning
+`Result<NoSuchAccount, String>`: `NoSuchAccount` is a subtype of `BankError`, but
+`Result<NoSuchAccount, …>` is not a subtype of `Result<BankError, …>`. The only
+workaround is `mapErr(e -> e)` on every step, the exact wart the DSL exists to
+remove. `Validated.Accumulator` has the same shape on `on(Validated<E, T>)`
+(`Validated.java:135`) and `on(Result<E, T>)` (`:138`).
+
+The issue verified the Result-side fix and asked three questions: does the same
+rule apply to `Accumulator.on`, does it apply to the point-free combinators
+(`flatMap` and friends), and should the ATM withdrawal flow become the `binding`
+doc-test. ADR-9 (issue #2) and ADR-10 (issue #3) landed the same day and touch
+these same handles; this ADR is orthogonal to both and must not contradict them.
+
+### Decision
+
+Widen the error type to `? extends E` **only where the DSL consumes a Result or
+Validated** — the `on` handles. Leave the point-free combinators invariant in `E`.
+
+**1. `Result.Binder.on` becomes error-covariant.** Three lines, the issue's
+verified fix:
+
+```java
+// interface
+<T> T on(Result<? extends E, T> result);
+
+// anonymous binder in Result.binding
+public <U> U on(Result<? extends E, U> result) {
+    // ... ADR-9's closed guard and aborted flag stay exactly as written ...
+    return switch (result) {
+        case Ok<? extends E, U> ok   -> ok.value();
+        case Err<? extends E, U> err -> { /* aborted = true; */ throw new Abort(this, err.error()); }
+    };
+}
+```
+
+`err.error()` is now `? extends E`, which widens to `E` for `new Abort(this,
+err.error())` (`Abort` still carries an `E`), so the boundary is unchanged. The
+`default on(Optional<? extends T>, Supplier)` and `default ensure(...)` methods
+delegate to `on` and need no edit.
+
+**2. `Validated.Accumulator.on` becomes error-covariant, both overloads.**
+
+```java
+// interface
+<T> Bound<T> on(Validated<? extends E, T> validated);
+default <T> Bound<T> on(Result<? extends E, T> result) { return on(fromResult(result)); }
+
+// anonymous accumulator in Validated.accumulate
+public <U> Bound<U> on(Validated<? extends E, U> validated) {
+    // ... ADR-9's closed guard stays ...
+    return switch (validated) {
+        case Valid<? extends E, U>   valid   -> valid::value;
+        case Invalid<? extends E, U> invalid -> {
+            errors.addAll(invalid.errors().toList());   // List<? extends E> into ArrayList<E>: ok
+            yield () -> { /* aborted = true; */ throw new Abort(this); };
+        }
+    };
+}
+```
+
+`invalid.errors().toList()` is `List<? extends E>` and `errors.addAll` accepts it.
+The `Result` overload delegates to `fromResult`, whose `<E,T> Validated<E,T>
+fromResult(Result<E,T>)` signature stays as-is: called with a `Result<? extends E,
+T>` it captures and returns a `Validated<CAP, T>` that the widened `on` accepts —
+verified compiling and running. `onEach`, `on(Optional, Supplier)`, `ensure` all
+delegate to `on` and need no edit. `fromResult` and the other static bridges
+(`Result.fromOptional`, `Validated.fromResult`) are left untouched.
+
+**3. The point-free combinators stay invariant in `E`.** `Result.flatMap`
+(`? extends Result<E, U>`), `Result.zip`, `Result.recover`, and `Validated.zip`
+keep their single fixed `E`. The rule the library teaches:
+
+> fforj consumes a Result/Validated error-covariantly **only at the `on` boundary
+> of a `binding` / `accumulate` block**, where unifying per-step error subtypes
+> into the block's `E` is the entire purpose. The algebraic combinators operate at
+> one fixed `E`; `mapErr` is how you widen a Result's error before combining.
+
+This is deliberate, not an oversight, for three reasons:
+
+- **`binding` is strictly the better tool for heterogeneous errors, so widening
+  `flatMap` buys little.** A widened `flatMap` is only sound if `self` is already
+  typed at the supertype (the result stays `Result<E, U>` with `E` fixed; Java has
+  no lower-bounded type parameter to express Scala's `flatMap[A1 >: A]`). So a
+  heterogeneous `flatMap` chain still needs a widen at the head
+  (`findAccount()` is `Result<NoSuchAccount, …>`, not `Result<BankError, …>`),
+  whereas `binding` unifies every step, including the first, automatically. The
+  combinator gains a wildcard but not the ergonomics.
+- **Cost lands on the primary combinator for a secondary API.** CLAUDE.md: the
+  pattern-match / DSL form is the API; combinators "are NOT the primary interface."
+  Widening `flatMap` means `Function<? super T, ? extends Result<? extends E, ?
+  extends U>>` and rebuilding the `Err` (today a zero-logic pass-through) or an
+  unchecked cast, on every combinator that consumes a Result, for a pattern the
+  library already steers into `binding`.
+- **The escape hatch is one call.** For the rare raw-combinator chain, `.<BankError>mapErr(e -> e)`
+  widens a subtype-errored Result to the supertype. `mapErr` means "adjust the
+  error type"; using it to widen is legible.
+
+Not a breaking change: `Result<E,T>` <: `Result<? extends E,T>`, so every argument
+that binds today still binds. Verified: the full ATM repro (Result `binding` and
+Validated `accumulate`, the latter via both `on(Validated)` and `on(Result)`)
+compiles and runs, and every existing call shape still compiles.
+
+**4. The ATM withdrawal flow becomes the `binding` doc-test in `ResultDocTest`.**
+It replaces the single-error `parsePositive` binding example
+(`sequence_steps_as_straight_line_code`) and pins the variance: three steps
+returning three distinct `BankError` subtypes bind into one `Result<BankError, …>`
+block with no per-step `mapErr`. Verified fixture:
+
+```java
+// site:include
+sealed interface BankError {
+    record NoSuchAccount(String id) implements BankError {}
+    record WrongPin() implements BankError {}
+    record OverDailyLimit(int requested, int remaining) implements BankError {}
+}
+static Result<BankError.NoSuchAccount, String>  findAccount(String id) { ... }
+static Result<BankError.WrongPin, String>       verifyPin(String account, String pin) { ... }
+static Result<BankError.OverDailyLimit, Integer> withdraw(String account, int amount) { ... }
+
+Result<BankError, Integer> cash = Result.binding(bind -> {
+    var account = bind.on(findAccount(id));         // Result<NoSuchAccount, String>
+    var ok      = bind.on(verifyPin(account, pin)); // Result<WrongPin, String>
+    return bind.on(withdraw(ok, amount));           // Result<OverDailyLimit, Integer>
+});
+```
+
+The accompanying prose says explicitly: each step fails with its own subtype and
+`binding` unifies them into `BankError` for you, no `mapErr` per step. The
+`parsePositive` fixture and its other doc-tests stay; only the `binding` section's
+example changes to this one.
+
+#### Test plan (the dev MUST cover)
+
+`ResultTest`:
+- `binding_unifies_heterogeneous_error_subtypes` — a `Result<BankError, …>` block
+  binds steps returning three distinct subtypes with no `mapErr`; an `Ok` path and
+  each subtype's `Err` short-circuit path return the widened `Result<BankError, …>`
+  carrying the right subtype value. This is the compile-and-behavior proof of the
+  widening.
+- Regression (must stay green): every existing `binding` test, including ADR-9's
+  swallow/escape tests and ADR-10's `ensure(Optional)` tests, still pass
+  unchanged. The widening is a parameter generalization; no existing behavior moves.
+
+`ValidatedTest`:
+- `accumulate_unifies_heterogeneous_error_subtypes` — an `Accumulator<BankError>`
+  block binds a `Validated<SubtypeA, …>` via `on(Validated)` and a
+  `Result<SubtypeB, …>` via `on(Result)`; when both fail, `Invalid` carries both
+  errors (widened to `BankError`) in binding order.
+- Regression (must stay green): all existing `accumulate`, `traverse`, `onEach`,
+  and ADR-9/ADR-10 tests.
+
+Doc-tests: the ATM `binding` doc-test above must run green under `./gradlew site`
+extraction (`// site:include` fixtures, real `assertEquals`).
+
+### Consequences
+
+- The library's flagship shape — sealed error hierarchy, one record per failure,
+  sequenced in `binding` — compiles as written, with no per-step `mapErr`. This is
+  what Scala `for` / Arrow `either {}` users expect, and it is what the external
+  write-up demonstrated.
+- The two DSL handles stay feature-symmetric (ADR-2, ADR-6): both `on` families
+  are now error-covariant on every overload.
+- A clear, teachable variance rule: covariance lives at the `on` boundary; the
+  combinators are single-`E` and `mapErr` is the explicit widen. No wildcard creep
+  into the combinator signatures, no `Err`-path reallocation, no unchecked casts.
+- Composes with ADR-9 and ADR-10 with no conflict, in any merge order: the
+  widening changes only the parameter type and the switch case types; ADR-9's
+  `closed`/`aborted` guards and ADR-10's `ensure(Optional<? extends E>)` overloads
+  sit on top unchanged (both delegate through the widened `on`).
+- Forward compat: if a future Java gains lower-bounded method type parameters
+  (Scala's `A1 >: A`), the combinators could revisit covariance; the `on`
+  widening is unaffected and remains correct.
+
+### Alternatives considered
+
+- **Widen the combinators too (`flatMap`, `zip`, `recover`, `Validated.zip`).**
+  Rejected. Sound only when `self` is pre-widened to the supertype (Java cannot
+  express `flatMap[A1 >: A]`), so a heterogeneous `flatMap` chain still needs a
+  head-of-chain widen while `binding` needs none — the combinator gains wildcard
+  noise and an `Err`-path rebuild/cast but not the ergonomics, on the library's
+  non-primary API. The one-call `mapErr` escape hatch covers the rare case.
+  Revisitable pre-1.0 if real demand appears; not now.
+- **Leave `on` invariant; document `mapErr(e -> e)` per step as the pattern.**
+  Rejected: it is exactly the wart the DSL exists to remove, on the library's
+  flagship example. A three-line generalization erases it with no downside.
+- **Add a covariant `Result.widenErr()` / upcast helper.** Rejected: a new method
+  for what subtype polymorphism should give for free, and it does not fix the
+  `binding` call site, only relocates the boilerplate.
+
+### Files to change
+
+- `src/main/java/dev/fforj/Result.java` — widen `Binder.on` (interface + anonymous
+  binder) and its switch cases to `? extends E`; keep ADR-9's `closed`/`aborted`
+  machinery. No combinator changes.
+- `src/main/java/dev/fforj/Validated.java` — widen `Accumulator.on(Validated)` and
+  `on(Result)` (interface + anonymous accumulator) and its switch cases to
+  `? extends E`; keep ADR-9's machinery. `fromResult` and other statics unchanged.
+- `src/test/java/dev/fforj/ResultTest.java` — `binding_unifies_heterogeneous_error_subtypes`.
+- `src/test/java/dev/fforj/ValidatedTest.java` — `accumulate_unifies_heterogeneous_error_subtypes`.
+- `src/test/java/dev/fforj/docs/ResultDocTest.java` — replace the `binding`
+  example with the ATM withdrawal flow (new `// site:include` `BankError` fixtures
+  and per-step methods); update the section prose.
+- `README.md` — if the `binding` snippet shows a single-error example, update it to
+  the sealed-hierarchy shape so the headline example matches what now compiles.
+- `CLAUDE.md` — no change; no locked decision moves.

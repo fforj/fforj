@@ -124,18 +124,35 @@ public sealed interface Validated<E, T> {
         T value();
     }
 
-    /** The binding handle passed to {@link #accumulate(Function)}. */
+    /**
+     * The binding handle passed to {@link #accumulate(Function)}.
+     *
+     * <p>Both {@code on} overloads are error-covariant: an {@code Accumulator<BankError>}
+     * accepts {@code Validated<NoSuchAccount, …>} and {@code Result<WrongPin, …>} where
+     * each subtype implements {@code BankError}, unifying per-step error subtypes into the
+     * block's {@code E} with no per-step {@code mapErr}. See ADR-11.
+     */
     interface Accumulator<E> {
 
         /**
          * Bind a {@code Validated}: a {@code Valid}'s value becomes available via
          * {@link Bound#value()}; an {@code Invalid}'s errors are added to the
          * accumulator. Binding never aborts the block; later validations still run.
+         *
+         * <p>The error is consumed covariantly ({@code ? extends E}), so steps that
+         * return a {@code Validated} with an error subtype are accepted without
+         * {@code mapErr}.
          */
-        <T> Bound<T> on(Validated<E, T> validated);
+        <T> Bound<T> on(Validated<? extends E, T> validated);
 
-        /** Bind a {@link Result}: {@code Err} accumulates as a single error. */
-        default <T> Bound<T> on(Result<E, T> result) {
+        /**
+         * Bind a {@link Result}: {@code Err} accumulates as a single error.
+         *
+         * <p>The error is consumed covariantly ({@code ? extends E}), so steps that
+         * return a {@code Result} with an error subtype are accepted without
+         * {@code mapErr}.
+         */
+        default <T> Bound<T> on(Result<? extends E, T> result) {
             return on(fromResult(result));
         }
 
@@ -220,10 +237,10 @@ public sealed interface Validated<E, T> {
 
         var acc = new Accumulator<E>() {
             @Override
-            public <U> Bound<U> on(Validated<E, U> validated) {
+            public <U> Bound<U> on(Validated<? extends E, U> validated) {
                 return switch (validated) {
-                    case Valid<E, U> valid -> valid::value;
-                    case Invalid<E, U> invalid -> {
+                    case Valid<? extends E, U> valid -> valid::value;
+                    case Invalid<? extends E, U> invalid -> {
                         errors.addAll(invalid.errors().toList());
                         yield () -> { throw new Abort(this); };
                     }

@@ -76,11 +76,18 @@ Validated<AppError, Form> form = Validated.accumulate(acc -> {
 ```
 
 ```java
-Result<AppError, Summary> r = Result.binding(bind -> {
-    var candidates = bind.on(NonEmptyList.fromList(xs), AppError.NoCandidates::new);
-    var best       = bind.on(score(candidates));         // Result-returning step
-    var enriched   = bind.on(Result.attempt(() -> fetch(best), AppError::from));
-    return Summary.of(enriched);
+// Sealed error hierarchy: each step returns its own subtype; binding unifies them.
+sealed interface BankError {
+    record NoSuchAccount(String id) implements BankError {}
+    record WrongPin()               implements BankError {}
+    record OverDailyLimit(int req, int limit) implements BankError {}
+}
+
+Result<BankError, Integer> cash = Result.binding(bind -> {
+    var account  = bind.on(findAccount(id));           // Result<NoSuchAccount, String>
+    var verified = bind.on(verifyPin(account, pin));   // Result<WrongPin, String>
+    return bind.on(withdraw(verified, amount));        // Result<OverDailyLimit, Integer>
+    // No mapErr per step: binding accepts any Result<? extends BankError, …>
 });
 ```
 

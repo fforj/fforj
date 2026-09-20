@@ -111,16 +111,53 @@ class ResultDocTest {
     /// `bind.on(...)` hands back the raw success value, and the first `Err` aborts the
     /// whole block and becomes its result. No `flatMap` towers, and every earlier
     /// value stays in scope for later steps.
+    ///
+    /// The error type is consumed covariantly, so each step can return its own subtype
+    /// of the block's error. The block unifies them for you — no `mapErr` per step.
+    ///
+    /// Here each step fails with its own subtype of `BankError`, and the block is
+    /// typed `Result<BankError, Integer>`:
+
+    // site:include
+    sealed interface BankError {
+        record NoSuchAccount(String id) implements BankError {}
+        record WrongPin() implements BankError {}
+        record OverDailyLimit(int requested, int remaining) implements BankError {}
+    }
+
+    // site:include
+    static Result<BankError.NoSuchAccount, String> findAccount(String id) {
+        return id.isEmpty() ? Result.err(new BankError.NoSuchAccount(id)) : Result.ok("acc-" + id);
+    }
+
+    // site:include
+    static Result<BankError.WrongPin, String> verifyPin(String account, String pin) {
+        return pin.equals("1234") ? Result.ok(account) : Result.err(new BankError.WrongPin());
+    }
+
+    // site:include
+    static Result<BankError.OverDailyLimit, Integer> withdraw(String account, int amount) {
+        int limit = 500;
+        return amount <= limit ? Result.ok(amount) : Result.err(new BankError.OverDailyLimit(amount, limit));
+    }
+
     @Test
     void sequence_steps_as_straight_line_code() {
-        Result<ParseError, Integer> total = Result.binding(bind -> {
-            int a = bind.on(parsePositive("3"));
-            int b = bind.on(parsePositive("4"));
-            int c = bind.on(parsePositive("5"));
-            return a * b * c;
+        // Each step returns a distinct BankError subtype; no per-step mapErr needed.
+        Result<BankError, Integer> cash = Result.binding(bind -> {
+            var account  = bind.on(findAccount("alice"));          // Result<NoSuchAccount, String>
+            var verified = bind.on(verifyPin(account, "1234"));    // Result<WrongPin, String>
+            return bind.on(withdraw(verified, 200));               // Result<OverDailyLimit, Integer>
         });
+        assertEquals(Result.ok(200), cash);
 
-        assertEquals(Result.ok(60), total);
+        // Wrong PIN short-circuits and propagates the WrongPin subtype as BankError.
+        Result<BankError, Integer> denied = Result.binding(bind -> {
+            var account  = bind.on(findAccount("alice"));
+            var verified = bind.on(verifyPin(account, "9999"));    // Err(WrongPin) -> aborts here
+            return bind.on(withdraw(verified, 200));
+        });
+        assertEquals(Result.err(new BankError.WrongPin()), denied);
     }
 
     /// ## Guards without values: `ensure`
