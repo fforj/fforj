@@ -1,0 +1,24 @@
+version: 2
+updates:
+  # Version catalog (JUnit BOM, maven-publish plugin) and the Gradle wrapper.
+  - package-ecosystem: gradle
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      # v6 moved caching into the proprietary gradle-actions-caching component
+      # (separate Gradle Terms of Use, not MIT). Stay on v5 until that changes.
+      - dependency-name: gradle/actions*
+        versions: [">= 6"]
