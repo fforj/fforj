@@ -151,7 +151,7 @@ Adding any new dep — runtime, test, or build — requires an ADR (PR + entry i
 If the wrapper jar is missing on a fresh clone, run once with system Gradle:
 
 ```bash
-gradle wrapper --gradle-version 9.5.1
+gradle wrapper --gradle-version 9.8.2
 ```
 
 ---
