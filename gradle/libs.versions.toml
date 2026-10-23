@@ -1,5 +1,5 @@
 [versions]
-junit = "5.12.2"
+junit = "5.14.4"
 mavenPublish = "0.37.0"
 
 [plugins]
