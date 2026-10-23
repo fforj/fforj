@@ -17,7 +17,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # tags needed for versions.json
 
@@ -59,7 +59,7 @@ jobs:
           java docs/SiteGen.java --version "$VERSION" --prefix "v/$VERSION/" --channel "$VERSION" \
             --javadoc build/docs/javadoc --out out-v
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: gh-pages
           path: pages
