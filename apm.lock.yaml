@@ -1,6 +1,6 @@
 lockfile_version: '1'
 generated_at: '2026-11-09T12:43:08.232442+00:00'
-apm_version: 0.35.0
+apm_version: 0.36.1
 dependencies:
 - repo_url: _local/bundle
   name: java-ai-primitives
