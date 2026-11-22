@@ -1,6 +1,10 @@
-lockfile_version: '1'
-generated_at: '2026-11-09T12:43:08.232442+00:00'
-apm_version: 0.36.1
+lockfile_version: '4'
+generated_at: '2026-11-22T09:00:34.323525+00:00'
+apm_version: 0.37.0
+manifest_targets:
+- copilot
+- gemini
+- opencode
 dependencies:
 - repo_url: _local/bundle
   name: java-ai-primitives
@@ -30,7 +34,7 @@ dependencies:
     .opencode/agents/reviewer.md: sha256:69d9b5c0c83338d17932dac80565671dd165becc8ea273002d983f6c2dc19d69
   source: local
   local_path: ./companion/ai/bundle
-  content_hash: sha256:81aa8c3f914488a955caaf7ff80c460c1c2f30aa18dd78edf4707ad4d1521f22
+  content_hash: sha256:0c504b2ef36dca20128a9e26dff12dd8c37fffaeea6f17e0189bc94c7fc68de2
 deployments:
 - kind: project-relative
   target: claude
