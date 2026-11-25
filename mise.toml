@@ -1,2 +1,3 @@
 [tools]
-apm = "0.37"
+# Exact: apm refuses an apm.lock.yaml written by any newer version, patches included.
+apm = "0.38.1"
