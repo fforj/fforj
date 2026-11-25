@@ -1,6 +1,6 @@
 lockfile_version: '4'
-generated_at: '2026-11-22T09:00:34.323525+00:00'
-apm_version: 0.37.0
+generated_at: '2026-11-25T11:32:11.558195+00:00'
+apm_version: 0.38.1
 manifest_targets:
 - copilot
 - gemini
@@ -35,6 +35,10 @@ dependencies:
   source: local
   local_path: ./companion/ai/bundle
   content_hash: sha256:0c504b2ef36dca20128a9e26dff12dd8c37fffaeea6f17e0189bc94c7fc68de2
+  package_targets:
+  - claude
+  - copilot
+  - opencode
 deployments:
 - kind: project-relative
   target: claude
