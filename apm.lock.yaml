@@ -1,6 +1,6 @@
 lockfile_version: '4'
 generated_at: '2026-11-25T11:36:36.454106+00:00'
-apm_version: 0.39.0
+apm_version: 0.39.1
 manifest_targets:
 - copilot
 - gemini
